@@ -1,0 +1,21 @@
+{
+  "name": "backend-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/A25-CS206/backend-service.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/A25-CS206/backend-service/issues"
+  },
+  "homepage": "https://github.com/A25-CS206/backend-service#readme"
+}
