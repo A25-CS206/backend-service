@@ -1,7 +1,7 @@
-const init = require("../src/server"); // Mengambil fungsi init yang di-export di atas
+const init = require("../src/server"); // Pastikan path ini benar
 
 module.exports = async (req, res) => {
-  const server = await init(); // Membuat instance server
-  await server.initialize(); // Menyiapkan server tanpa membuka port (listen)
-  return server.listener(req, res); // Meneruskan request HTTP Vercel ke Hapi
+  const server = await init(); // Memanggil fungsi init yang diexport tadi
+  await server.initialize();
+  return server.listener(req, res);
 };
