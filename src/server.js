@@ -18,20 +18,20 @@ const journeys = require("./api/journeys");
 const JourneysService = require("./services/postgres/JourneysService");
 const JourneysValidator = require("./validator/journeys");
 
-// --- IMPORT PLUGIN TRACKINGS (BARU) ---
+// --- IMPORT PLUGIN TRACKINGS ---
 const trackings = require("./api/trackings");
 const TrackingsService = require("./services/postgres/TrackingsService");
 const TrackingsValidator = require("./validator/trackings");
 
 const init = async () => {
-  // 1. INSTANSIASI SEMUA SERVICE (Koneksi Database)
+  // 1. INSTANSIASI SEMUA SERVICE
   const usersService = new UsersService();
   const journeysService = new JourneysService();
-  const trackingsService = new TrackingsService(); // <--- Service Baru
+  const trackingsService = new TrackingsService();
 
   const server = Hapi.server({
-    port: process.env.PORT,
-    host: process.env.HOST,
+    port: process.env.PORT || 5000,
+    host: process.env.HOST || "0.0.0.0", // 0.0.0.0 wajib untuk Vercel/Render
     routes: {
       cors: {
         origin: ["*"],
@@ -39,18 +39,13 @@ const init = async () => {
     },
   });
 
-  // ==========================================================
-  // KONFIGURASI JWT STRATEGY
-  // ==========================================================
-
-  // Registrasi plugin eksternal @hapi/jwt
+  // 2. REGISTRASI JWT STRATEGY
   await server.register([
     {
       plugin: Jwt,
     },
   ]);
 
-  // Definisikan Strategi Auth 'learning_jwt'
   server.auth.strategy("learning_jwt", "jwt", {
     keys: process.env.ACCESS_TOKEN_KEY,
     verify: {
@@ -70,12 +65,8 @@ const init = async () => {
     },
   });
 
-  // ==========================================================
-  // REGISTRASI PLUGIN INTERNAL
-  // ==========================================================
-
+  // 3. REGISTRASI PLUGIN INTERNAL
   await server.register([
-    // 1. Plugin Users
     {
       plugin: users,
       options: {
@@ -83,7 +74,6 @@ const init = async () => {
         validator: UsersValidator,
       },
     },
-    // 2. Plugin Authentications
     {
       plugin: authentications,
       options: {
@@ -93,7 +83,6 @@ const init = async () => {
         validator: AuthenticationsValidator,
       },
     },
-    // 3. Plugin Journeys
     {
       plugin: journeys,
       options: {
@@ -101,7 +90,6 @@ const init = async () => {
         validator: JourneysValidator,
       },
     },
-    // 4. Plugin Trackings (BARU)
     {
       plugin: trackings,
       options: {
@@ -111,15 +99,11 @@ const init = async () => {
     },
   ]);
 
-  // ==========================================================
-  // ERROR HANDLING GLOBAL
-  // ==========================================================
-
+  // 4. ERROR HANDLING
   server.ext("onPreResponse", (request, h) => {
     const { response } = request;
 
     if (response instanceof Error) {
-      // Penanganan Client Error (400, 401, 404 buatan kita)
       if (response instanceof ClientError) {
         const newResponse = h.response({
           status: "fail",
@@ -129,14 +113,11 @@ const init = async () => {
         return newResponse;
       }
 
-      // Penanganan Server Error (500)
       if (!response.isServer) {
         return h.continue;
       }
 
-      // Log error di terminal untuk debugging
       console.error("Server Error:", response.message);
-
       const newResponse = h.response({
         status: "error",
         message: "Maaf, terjadi kegagalan pada server kami.",
@@ -148,8 +129,19 @@ const init = async () => {
     return h.continue;
   });
 
-  await server.start();
-  console.log(`Server berjalan pada ${server.info.uri}`);
+  // PENTING: Jangan di-start di sini, tapi return instance server-nya
+  return server;
 };
 
-init();
+// Logika Start: Hanya jalankan server.start() jika file ini dieksekusi langsung (Local)
+// Vercel TIDAK akan masuk ke blok if ini.
+if (require.main === module) {
+  init().then((server) => {
+    server.start().then(() => {
+      console.log(`Server berjalan pada ${server.info.uri}`);
+    });
+  });
+}
+
+// PENTING: Export fungsi init agar bisa dibaca oleh api/index.js
+module.exports = init;
