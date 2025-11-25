@@ -3,11 +3,20 @@ const { nanoid } = require("nanoid");
 const bcrypt = require("bcrypt");
 const InvariantError = require("../../exceptions/InvariantError");
 const AuthenticationError = require("../../exceptions/AuthenticationError");
-const NotFoundError = require("../../exceptions/NotFoundError"); // <--- Wajib ada
+const NotFoundError = require("../../exceptions/NotFoundError");
 
 class UsersService {
   constructor() {
-    this._pool = new Pool();
+    // Deteksi apakah ENV mewajibkan SSL (Vercel/Neon)
+    const isSsl = process.env.PGSSLMODE === "require";
+
+    this._pool = new Pool({
+      ssl: isSsl
+        ? {
+            rejectUnauthorized: false, // Biarkan Neon menghandle sertifikatnya
+          }
+        : false,
+    });
   }
 
   async addUser({ name, email, password }) {
@@ -68,7 +77,6 @@ class UsersService {
     return { id, role: user_role };
   }
 
-  // --- METHOD BARU UNTUK FITUR /USERS/ME ---
   async getUserById(userId) {
     const query = {
       text: "SELECT id, display_name, email FROM users WHERE id = $1",
@@ -84,7 +92,7 @@ class UsersService {
     const user = result.rows[0];
     return {
       id: user.id,
-      name: user.display_name, // Mapping dari display_name ke name
+      name: user.display_name,
       email: user.email,
     };
   }

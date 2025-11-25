@@ -5,10 +5,17 @@ const NotFoundError = require("../../exceptions/NotFoundError");
 
 class JourneysService {
   constructor() {
-    this._pool = new Pool();
+    const isSsl = process.env.PGSSLMODE === "require";
+
+    this._pool = new Pool({
+      ssl: isSsl
+        ? {
+            rejectUnauthorized: false,
+          }
+        : false,
+    });
   }
 
-  // Menambah Kelas Baru
   async addJourney({ name, summary, difficulty, instructorId }) {
     const id = `journey-${nanoid(16)}`;
     const createdAt = new Date().toISOString();
@@ -28,9 +35,7 @@ class JourneysService {
     return result.rows[0].id;
   }
 
-  // Mengambil Semua Daftar Kelas
   async getJourneys() {
-    // Kita JOIN dengan tabel users supaya dapat nama instrukturnya
     const query = {
       text: `SELECT j.id, j.name, j.difficulty, u.display_name as instructor_name 
              FROM developer_journeys j
@@ -41,7 +46,6 @@ class JourneysService {
     return result.rows;
   }
 
-  // Mengambil Detail Satu Kelas
   async getJourneyById(id) {
     const query = {
       text: `SELECT j.*, u.display_name as instructor_name 

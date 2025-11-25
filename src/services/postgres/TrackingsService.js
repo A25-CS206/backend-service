@@ -4,10 +4,17 @@ const InvariantError = require("../../exceptions/InvariantError");
 
 class TrackingsService {
   constructor() {
-    this._pool = new Pool();
+    const isSsl = process.env.PGSSLMODE === "require";
+
+    this._pool = new Pool({
+      ssl: isSsl
+        ? {
+            rejectUnauthorized: false,
+          }
+        : false,
+    });
   }
 
-  // Mencatat Aktivitas (Dipanggil saat user buka materi)
   async logActivity({ journeyId, tutorialId, userId }) {
     const timeNow = new Date().toISOString();
 
@@ -47,7 +54,6 @@ class TrackingsService {
     }
   }
 
-  // Mengambil Riwayat Belajar Siswa (Buat input AI nanti)
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT t.id, j.name as journey_name, tut.title as tutorial_title, t.status, t.last_viewed 
