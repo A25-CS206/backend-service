@@ -1,10 +1,10 @@
 const ClientError = require("./ClientError");
 
-class AuthenticationError extends ClientError {
+class AuthorizationError extends ClientError {
   constructor(message) {
-    super(message, 401); // 401 = Unauthorized
-    this.name = "AuthenticationError";
+    super(message, 403);
+    this.name = "AuthorizationError";
   }
 }
 
-module.exports = AuthenticationError;
+module.exports = AuthorizationError;

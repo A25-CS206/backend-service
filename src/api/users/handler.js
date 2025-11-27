@@ -4,14 +4,22 @@ class UsersHandler {
     this._validator = validator;
 
     this.postUserHandler = this.postUserHandler.bind(this);
-    this.getUserByIdHandler = this.getUserByIdHandler.bind(this); // <--- Binding baru
+    this.getUserByIdHandler = this.getUserByIdHandler.bind(this);
   }
 
   async postUserHandler(request, h) {
     this._validator.validateUserPayload(request.payload);
 
-    const { name, email, password } = request.payload;
-    const userId = await this._service.addUser({ name, email, password });
+    const { name, email, password, phone, city, imagePath } = request.payload;
+
+    const userId = await this._service.addUser({
+      name,
+      email,
+      password,
+      phone,
+      city,
+      imagePath,
+    });
 
     const response = h.response({
       status: "success",
@@ -24,11 +32,8 @@ class UsersHandler {
     return response;
   }
 
-  // --- HANDLER BARU ---
   async getUserByIdHandler(request, h) {
-    // Ambil ID dari token yang sudah dibuka oleh strategi 'learning_jwt'
     const { id } = request.auth.credentials;
-
     const user = await this._service.getUserById(id);
 
     return {

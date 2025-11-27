@@ -7,19 +7,17 @@ const NotFoundError = require("../../exceptions/NotFoundError");
 
 class UsersService {
   constructor() {
-    // Deteksi apakah ENV mewajibkan SSL (Vercel/Neon)
-    const isSsl = process.env.PGSSLMODE === "require";
-
-    this._pool = new Pool({
-      ssl: isSsl
-        ? {
-            rejectUnauthorized: false, // Biarkan Neon menghandle sertifikatnya
-          }
-        : false,
-    });
+    if (process.env.DATABASE_URL) {
+      this._pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      });
+    } else {
+      this._pool = new Pool();
+    }
   }
 
-  async addUser({ name, email, password }) {
+  async addUser({ name, email, password, phone, city, imagePath }) {
     await this.verifyNewEmail(email);
 
     const id = `user-${nanoid(16)}`;
@@ -28,8 +26,11 @@ class UsersService {
     const updatedAt = createdAt;
 
     const query = {
-      text: "INSERT INTO users VALUES($1, $2, $3, $4, DEFAULT, $5, $6) RETURNING id",
-      values: [id, name, email, hashedPassword, createdAt, updatedAt],
+      text: `INSERT INTO users 
+             (id, display_name, email, password, phone, city, image_path, user_role, created_at, updated_at) 
+             VALUES($1, $2, $3, $4, $5, $6, $7, 'developer', $8, $9) 
+             RETURNING id`,
+      values: [id, name, email, hashedPassword, phone, city, imagePath, createdAt, updatedAt],
     };
 
     const result = await this._pool.query(query);
@@ -46,9 +47,7 @@ class UsersService {
       text: "SELECT email FROM users WHERE email = $1",
       values: [email],
     };
-
     const result = await this._pool.query(query);
-
     if (result.rows.length > 0) {
       throw new InvariantError("Gagal menambahkan user. Email sudah digunakan.");
     }
@@ -59,7 +58,6 @@ class UsersService {
       text: "SELECT id, password, user_role FROM users WHERE email = $1",
       values: [email],
     };
-
     const result = await this._pool.query(query);
 
     if (!result.rows.length) {
@@ -67,7 +65,6 @@ class UsersService {
     }
 
     const { id, password: hashedPassword, user_role } = result.rows[0];
-
     const match = await bcrypt.compare(password, hashedPassword);
 
     if (!match) {
@@ -79,10 +76,9 @@ class UsersService {
 
   async getUserById(userId) {
     const query = {
-      text: "SELECT id, display_name, email FROM users WHERE id = $1",
+      text: "SELECT id, display_name, email, phone, city, user_role FROM users WHERE id = $1",
       values: [userId],
     };
-
     const result = await this._pool.query(query);
 
     if (!result.rows.length) {
@@ -94,6 +90,9 @@ class UsersService {
       id: user.id,
       name: user.display_name,
       email: user.email,
+      phone: user.phone,
+      city: user.city,
+      role: user.user_role,
     };
   }
 }

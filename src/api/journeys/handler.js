@@ -1,3 +1,5 @@
+const AuthorizationError = require("../../exceptions/AuthorizationError"); // <--- Import Error Baru
+
 class JourneysHandler {
   constructor(service, validator) {
     this._service = service;
@@ -9,14 +11,17 @@ class JourneysHandler {
   }
 
   async postJourneyHandler(request, h) {
-    // 1. Validasi Input
+    const { role } = request.auth.credentials;
+
+    if (role !== "admin" && role !== "instructor") {
+      throw new AuthorizationError("Anda tidak berhak membuat kelas! Hanya Admin/Instruktur.");
+    }
+
     this._validator.validateJourneyPayload(request.payload);
 
-    // 2. Ambil ID User yang sedang login (Otomatis jadi instruktur)
     const { id: instructorId } = request.auth.credentials;
     const { name, summary, difficulty } = request.payload;
 
-    // 3. Panggil Service
     const journeyId = await this._service.addJourney({
       name,
       summary,
