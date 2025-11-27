@@ -1,28 +1,7 @@
-Tentu, ini adalah versi **README.md** yang lengkap, rapi, dan siap pakai.
+````
+### API Documentation
 
-Kamu tinggal buat file baru bernama `README.md` di root folder proyekmu (atau timpa yang lama), lalu paste kode di bawah ini.
-
----
-
-````markdown
-# 🚀 AI Learning Insight - Back-End Service
-
-Repository ini berisi **RESTful API** untuk sistem Learning Insight. Dibangun menggunakan **Hapi.js**, database **PostgreSQL (Neon)**, dan di-deploy menggunakan **Vercel**.
-
----
-
-## 🌐 Base URL (Production)
-
-**`https://backend-service-tau.vercel.app`**
-
-> **Catatan:** Untuk endpoint yang membutuhkan otentikasi, sertakan header:
-> `Authorization: Bearer <your_access_token>`
-
----
-
-## 📝 API Documentation
-
-### 🔐 1. Authentication (User Management)
+### 1. Authentication (User Management)
 
 #### **Register User**
 
@@ -41,7 +20,8 @@ Mendaftarkan akun siswa baru dengan data lengkap.
     "city": "Bandung",
     "imagePath": "[https://example.com/avatar.jpg](https://example.com/avatar.jpg)" // (Opsional)
   }
-  ```
+````
+
 ````
 
 - **Response (201 Created):**
@@ -104,7 +84,7 @@ Mendapatkan data diri user yang sedang login.
 
 ---
 
-### 📚 2. Journeys (Manajemen Kelas)
+### 2. Journeys (Manajemen Kelas)
 
 #### **Create Journey** (Admin/Instructor Only)
 
@@ -179,7 +159,7 @@ Melihat detail satu kelas spesifik.
 
 ---
 
-### 📊 3. Trackings (Aktivitas Belajar)
+### 3. Trackings (Aktivitas Belajar)
 
 #### **Log Activity**
 
@@ -228,28 +208,7 @@ Melihat riwayat belajar siswa sendiri (untuk grafik dashboard).
     }
   }
   ```
-
----
-
-## 🤖 Informasi untuk Tim Machine Learning
-
-Data aktivitas belajar tersimpan secara _real-time_ di Database **Neon (PostgreSQL)**.
-
-- **Tabel Utama:** `developer_journey_trackings`
-- **Akses Data:** Gunakan kredensial database yang telah dibagikan untuk menghubungkan script Python/Pandas kalian.
-
----
-
-## 🛠️ Cara Menjalankan Lokal
-
-1.  Clone repo ini.
-2.  `npm install`
-3.  Buat file `.env` (sesuaikan dengan config database lokal).
-4.  Jalankan migrasi database di TablePlus (folder `/migrations`).
-5.  `npm run start-dev`.
-
----
-
 ```
 
 ```
+````
