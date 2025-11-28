@@ -7,6 +7,7 @@ const NotFoundError = require("../../exceptions/NotFoundError");
 
 class UsersService {
   constructor() {
+    // Logic connection string untuk Vercel/Neon
     if (process.env.DATABASE_URL) {
       this._pool = new Pool({
         connectionString: process.env.DATABASE_URL,
@@ -17,20 +18,68 @@ class UsersService {
     }
   }
 
-  async addUser({ name, email, password, phone, city, imagePath }) {
-    await this.verifyNewEmail(email);
+  // Method untuk registrasi user baru (dengan data lengkap)
+  async addUser(payload) {
+    await this.verifyNewEmail(payload.email);
 
     const id = `user-${nanoid(16)}`;
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(payload.password, 10);
     const createdAt = new Date().toISOString();
     const updatedAt = createdAt;
 
+    // Destructure payload lengkap, set default untuk field yang tidak wajib diisi
+    const {
+      name,
+      email,
+      phone,
+      city,
+      imagePath,
+      customCity,
+      tz,
+      rememberToken = null,
+      unsubscribeLink = null,
+      verifiedAt = null,
+      ama = 0,
+      phoneVerificationStatus = 0,
+      phoneVerifiedWith = null,
+      verifiedCertificateName = null,
+      verifiedIdentityDocument = null,
+    } = payload;
+
+    // Query INSERT yang memasukkan SEMUA kolom sesuai skema lengkap (20 kolom + 3 kolom default)
     const query = {
-      text: `INSERT INTO users 
-             (id, display_name, email, password, phone, city, image_path, user_role, created_at, updated_at) 
-             VALUES($1, $2, $3, $4, $5, $6, $7, 'developer', $8, $9) 
-             RETURNING id`,
-      values: [id, name, email, hashedPassword, phone, city, imagePath, createdAt, updatedAt],
+      text: `INSERT INTO users (
+        id, display_name, name, email, password, phone, city, image_path, user_role, 
+        custom_city, tz, remember_token, unsubscribe_link, verified_at, ama, 
+        phone_verification_status, phone_verified_with, verified_certificate_name, verified_identity_document,
+        created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, 'developer', 
+        $9, $10, $11, $12, $13, $14, 
+        $15, $16, $17, $18, $19, $20
+      ) RETURNING id`,
+      values: [
+        id,
+        name,
+        name,
+        email,
+        hashedPassword,
+        phone,
+        city,
+        imagePath,
+        customCity,
+        tz,
+        rememberToken,
+        unsubscribeLink,
+        verifiedAt,
+        ama,
+        phoneVerificationStatus,
+        phoneVerifiedWith,
+        verifiedCertificateName,
+        verifiedIdentityDocument,
+        createdAt,
+        updatedAt,
+      ],
     };
 
     const result = await this._pool.query(query);
@@ -74,9 +123,11 @@ class UsersService {
     return { id, role: user_role };
   }
 
+  // Method untuk mendapatkan data user berdasarkan ID
   async getUserById(userId) {
+    // SELECT kolom yang relevan untuk dikembalikan ke API
     const query = {
-      text: "SELECT id, display_name, email, phone, city, user_role FROM users WHERE id = $1",
+      text: "SELECT id, display_name, name, email, phone, city, user_role, image_path FROM users WHERE id = $1",
       values: [userId],
     };
     const result = await this._pool.query(query);
@@ -88,11 +139,13 @@ class UsersService {
     const user = result.rows[0];
     return {
       id: user.id,
-      name: user.display_name,
+      name: user.name, // Nama lengkap
+      displayName: user.display_name,
       email: user.email,
       phone: user.phone,
       city: user.city,
       role: user.user_role,
+      image_path: user.image_path,
     };
   }
 }
