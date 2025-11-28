@@ -20,10 +20,19 @@ const trackings = require("./api/trackings");
 const TrackingsService = require("./services/postgres/TrackingsService");
 const TrackingsValidator = require("./validator/trackings");
 
+// >>> START: INTEGRASI PLUGIN INSIGHTS BARU <<<
+const insights = require("./api/insights");
+const InsightsService = require("./services/postgres/InsightsService");
+// >>> END: INTEGRASI PLUGIN INSIGHTS BARU <<<
+
 const init = async () => {
   const usersService = new UsersService();
   const journeysService = new JourneysService();
   const trackingsService = new TrackingsService();
+
+  // >>> START: INSTANSIASI INSIGHTS SERVICE <<<
+  const insightsService = new InsightsService();
+  // >>> END: INSTANSIASI INSIGHTS SERVICE <<<
 
   const server = Hapi.server({
     port: process.env.PORT || 5000,
@@ -78,6 +87,12 @@ const init = async () => {
       plugin: trackings,
       options: { service: trackingsService, validator: TrackingsValidator },
     },
+    // >>> START: REGISTRASI PLUGIN INSIGHTS <<<
+    {
+      plugin: insights,
+      options: { service: insightsService },
+    },
+    // >>> END: REGISTRASI PLUGIN INSIGHTS <<<
   ]);
 
   server.ext("onPreResponse", (request, h) => {
@@ -105,7 +120,7 @@ const init = async () => {
     return h.continue;
   });
 
-  // PENTING: Return server instance, jangan start di sini
+  // PENTING: Return server instance
   return server;
 };
 
