@@ -18,7 +18,7 @@ Aplikasi ini menggunakan **arsitektur microservices** dengan dua layanan utama:
 
 - **Platform**: Render/Railway
 - **Fungsi**: Pipeline ML (Scaler → PCA → KMeans) untuk prediksi tipe pembelajar
-- **Base URL**: `https://ml-learning-insight-kamu.onrender.com`
+- **Base URL**: `https://ml-learning-insight.up.railway.app/`
 
 ---
 
