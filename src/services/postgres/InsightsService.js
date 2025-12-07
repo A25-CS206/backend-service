@@ -15,7 +15,7 @@ class InsightsService {
   }
 
   // =================================================================
-  // METHOD 1: GENERATE INSIGHT (Memicu AI Python)
+  // METHOD 1: GENERATE INSIGHT (Memicu AI Python & Menyimpan Hasil)
   // =================================================================
   async generateStudentInsight(userId) {
     // 1. QUERY DATABASE: Ambil Data Raw Tracking
@@ -110,13 +110,14 @@ class InsightsService {
   // METHOD 2: GET DASHBOARD STATS (Data Tampilan Front-End)
   // =================================================================
   async getDashboardStats(userId) {
-    // A. Query Insight AI (Ambil status Learner Type)
+    // A. Query Insight AI (Ambil status Learner Type dari DB)
     const queryInsight = {
       text: "SELECT learner_type, cluster FROM user_learning_clusters WHERE user_id = $1",
       values: [userId],
     };
 
     // B. Query Statistik Utama (Jam Belajar, Kelas Selesai, Consistency)
+    // Menggunakan COALESCE agar return 0 jika data kosong, bukan NULL
     const queryStats = {
       text: `
         SELECT 
@@ -217,8 +218,8 @@ class InsightsService {
     const recommendations = resRecs.rows.map((row) => ({
       id: row.id,
       title: row.name,
-      difficulty: row.difficulty,
-      estimatedTime: `${row.hours_to_study} hours`,
+      difficulty: row.difficulty || "beginner", // Fallback value
+      estimatedTime: `${row.hours_to_study || 5} hours`, // Fallback value
     }));
 
     // 4. Format Achievements / Badges (Fitur Baru)
