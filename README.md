@@ -5,7 +5,7 @@
 [![Framework](https://img.shields.io/badge/Framework-Hapi.js-orange)](https://hapi.dev)
 [![Database](https://img.shields.io/badge/Database-PostgreSQL-blue?logo=postgresql)](https://www.postgresql.org)
 
-> **Capstone Project A25-CS206 | Bangkit Academy 2025**  
+> **Capstone Project A25-CS206 | Asah 2025**  
 > Platform pembelajaran adaptif berbasis AI yang menganalisis pola belajar siswa secara real-time menggunakan Machine Learning.
 
 ---
