@@ -1,4 +1,4 @@
-# Learning Insight API - Tim Capstone A25-CS206
+[# Learning Insight API - Tim Capstone A25-CS206
 
 Sistem pembelajaran adaptif berbasis Machine Learning untuk mengidentifikasi tipe pembelajar.
 
@@ -323,3 +323,4 @@ MIT License - Tim Capstone A25-CS206
 ## Contact
 
 For questions or issues, please contact the development team.
+](https://github.com/A25-CS206/fe-learning-insight)
