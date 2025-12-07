@@ -18,7 +18,7 @@ class InsightsService {
   // METHOD 1: GENERATE INSIGHT (Memicu AI Python & Menyimpan Hasil)
   // =================================================================
   async generateStudentInsight(userId) {
-    // 1. QUERY DATABASE: Ambil Data Raw Tracking
+    // 1. QUERY DATABASE: Ambil Data Raw Tracking (Query Aman)
     const query = {
       text: `
         SELECT 
@@ -117,7 +117,6 @@ class InsightsService {
     };
 
     // B. Query Statistik Utama (Jam Belajar, Kelas Selesai, Consistency)
-    // Menggunakan COALESCE agar return 0 jika data kosong, bukan NULL
     const queryStats = {
       text: `
         SELECT 
@@ -160,11 +159,12 @@ class InsightsService {
       values: [userId],
     };
 
-    // E. Query REKOMENDASI MODUL (Fitur Baru)
-    // Mengambil 2 kursus yang BELUM pernah diambil oleh user
+    // E. Query REKOMENDASI (VERSI "WORKAROUND/AKAL-AKALAN")
+    // PENTING: Kita HANYA ambil 'id' dan 'name'.
+    // Kita TIDAK mengambil 'hours_to_study' agar tidak error 500 karena kolom DB tidak ada.
     const queryRecs = {
       text: `
-            SELECT id, name, difficulty, hours_to_study 
+            SELECT id, name
             FROM developer_journeys
             WHERE id NOT IN (
                 SELECT DISTINCT journey_id FROM developer_journey_trackings WHERE developer_id = $1
@@ -174,7 +174,7 @@ class InsightsService {
       values: [userId],
     };
 
-    // Eksekusi Semua Query secara Paralel (Optimasi Performance)
+    // Eksekusi Semua Query secara Paralel
     const [resInsight, resStats, resScore, resTrend, resRecs] = await Promise.all([
       this._pool.query(queryInsight),
       this._pool.query(queryStats),
@@ -214,15 +214,29 @@ class InsightsService {
       value: parseFloat(daysMap[day].toFixed(1)),
     }));
 
-    // 3. Format Rekomendasi Modul
-    const recommendations = resRecs.rows.map((row) => ({
-      id: row.id,
-      title: row.name,
-      difficulty: row.difficulty || "beginner", // Fallback value
-      estimatedTime: `${row.hours_to_study || 5} hours`, // Fallback value
-    }));
+    // --- LOGIKA MANUAL: METADATA MAP (SOLUSI DB LEGACY) ---
+    // Karena kolom difficulty & hours tidak ada di DB, kita tulis manual di sini.
+    const METADATA_MAP = {
+      15: { difficulty: "expert", hours: 4 },
+      16: { difficulty: "beginner", hours: 12 },
+      // Default value kalau ID kursusnya lain
+      default: { difficulty: "intermediate", hours: 5 },
+    };
 
-    // 4. Format Achievements / Badges (Fitur Baru)
+    // 3. Mapping Recommendations dengan Metadata Map
+    const recommendations = resRecs.rows.map((row) => {
+      // Cek apakah ID ada di map, kalau tidak pakai default
+      const meta = METADATA_MAP[row.id] || METADATA_MAP["default"];
+
+      return {
+        id: row.id,
+        title: row.name,
+        difficulty: meta.difficulty, // Ambil dari JS
+        estimatedTime: `${meta.hours} hours`, // Ambil dari JS
+      };
+    });
+
+    // 4. Format Achievements / Badges
     const badgesList = [
       {
         id: "fast",
