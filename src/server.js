@@ -39,8 +39,8 @@ const init = async () => {
     host: process.env.HOST || "0.0.0.0",
     routes: {
       cors: {
+        // <--- INI GLOBAL CONFIG
         origin: ["*"],
-        // TAMBAHAN AGAR FRONTEND BISA KIRIM TOKEN & JSON
         headers: ["Accept", "Authorization", "Content-Type", "If-None-Match"],
         additionalHeaders: ["cache-control", "x-requested-with"],
       },
