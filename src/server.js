@@ -39,9 +39,18 @@ const init = async () => {
     host: process.env.HOST || "0.0.0.0",
     routes: {
       cors: {
-        origin: ["*"], // Bolehin semua orang masuk
+        origin: ["*"], // 1. Izinkan semua domain (Naufal) masuk
+
+        // 2. Izinkan Header Authorization (Token yang dibawa Naufal)
         headers: ["Accept", "Authorization", "Content-Type", "If-None-Match"],
-        additionalHeaders: ["cache-control", "x-requested-with"],
+
+        // 3. Tambahan header biar Browser ga rewel (Sesuai request Naufal)
+        additionalHeaders: [
+          "cache-control",
+          "x-requested-with",
+          "access-control-request-headers",
+          "access-control-request-method",
+        ],
       },
     },
   });
@@ -89,12 +98,10 @@ const init = async () => {
       plugin: trackings,
       options: { service: trackingsService, validator: TrackingsValidator },
     },
-    // >>> START: REGISTRASI PLUGIN INSIGHTS <<<
     {
       plugin: insights,
       options: { service: insightsService },
     },
-    // >>> END: REGISTRASI PLUGIN INSIGHTS <<<
   ]);
 
   server.ext("onPreResponse", (request, h) => {
@@ -122,11 +129,9 @@ const init = async () => {
     return h.continue;
   });
 
-  // PENTING: Return server instance untuk Vercel
   return server;
 };
 
-// Logika Start: Hanya jalan kalau file ini dieksekusi langsung (Local)
 if (require.main === module) {
   init().then((server) => {
     server.start().then(() => {
@@ -135,5 +140,4 @@ if (require.main === module) {
   });
 }
 
-// === BAGIAN INI SANGAT PENTING (JANGAN HAPUS) ===
 module.exports = init;
