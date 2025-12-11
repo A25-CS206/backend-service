@@ -40,6 +40,9 @@ const init = async () => {
     routes: {
       cors: {
         origin: ["*"],
+        // TAMBAHAN AGAR FRONTEND BISA KIRIM TOKEN & JSON
+        headers: ["Accept", "Authorization", "Content-Type", "If-None-Match"],
+        additionalHeaders: ["cache-control", "x-requested-with"],
       },
     },
   });
@@ -120,7 +123,7 @@ const init = async () => {
     return h.continue;
   });
 
-  // PENTING: Return server instance
+  // PENTING: Return server instance untuk Vercel
   return server;
 };
 
