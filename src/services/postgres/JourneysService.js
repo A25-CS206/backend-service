@@ -3,17 +3,14 @@ const { nanoid } = require("nanoid");
 const InvariantError = require("../../exceptions/InvariantError");
 const NotFoundError = require("../../exceptions/NotFoundError");
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: false } : false,
+});
+
 class JourneysService {
   constructor() {
-    const isSsl = process.env.PGSSLMODE === "require";
-
-    this._pool = new Pool({
-      ssl: isSsl
-        ? {
-            rejectUnauthorized: false,
-          }
-        : false,
-    });
+    this._pool = pool;
   }
 
   async addJourney({ name, summary, difficulty, instructorId }) {
@@ -22,7 +19,10 @@ class JourneysService {
     const updatedAt = createdAt;
 
     const query = {
-      text: "INSERT INTO developer_journeys VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+      text: `INSERT INTO developer_journeys 
+             (id, name, summary, difficulty, instructor_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             RETURNING id`,
       values: [id, name, summary, difficulty, instructorId, createdAt, updatedAt],
     };
 
@@ -37,7 +37,7 @@ class JourneysService {
 
   async getJourneys() {
     const query = {
-      text: `SELECT j.id, j.name, j.difficulty, u.display_name as instructor_name 
+      text: `SELECT j.id, j.name, j.difficulty, j.summary, u.display_name as instructor_name 
              FROM developer_journeys j
              LEFT JOIN users u ON j.instructor_id = u.id`,
     };
