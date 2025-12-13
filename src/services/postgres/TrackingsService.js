@@ -1,31 +1,57 @@
 const { nanoid } = require("nanoid");
 const InvariantError = require("../../exceptions/InvariantError");
+const { Pool } = require("pg"); // Diimpor ulang untuk kejelasan
+
+// --- KONSTANTA (Diposisikan di luar atau di dalam file) ---
+const DEMO_USER_ID = "user-f5KSPirteftx8lLo";
+const DEMO_START_DATE = "2025-12-01"; // Tanggal dimulainya data demo
+const DEMO_END_DATE = "2025-12-08"; // Akhir dari "Current Week" demo (7 hari setelah start)
 
 class TrackingsService {
   constructor(pool) {
     this._pool = pool;
   }
 
+  // --- HELPER UNTUK MENGAMBIL PERSONA DARI TABEL CLUSTERING ---
+  async _getPersonaFromClusterTable(userId) {
+    const query = {
+      text: "SELECT learner_type FROM user_learning_clusters WHERE user_id = $1",
+      values: [userId],
+    };
+    const result = await this._pool.query(query);
+    return result.rows.length > 0 ? result.rows[0].learner_type : null;
+  }
+
   // ==========================================================
   // 1. DASHBOARD OVERVIEW (/api/dashboard)
   // ==========================================================
   async getDashboardOverview(userId) {
+    const isDemoUser = userId === DEMO_USER_ID;
+
+    // --- Dynamic Date Handling (Menggunakan tanggal demo atau NOW() normal) ---
+    // Jika user adalah demo, gunakan rentang 2025-12-01 hingga 2025-12-08
+    const currentStart = isDemoUser ? `DATE '${DEMO_START_DATE}'` : `NOW() - INTERVAL '7 days'`;
+    const currentEnd = isDemoUser ? `DATE '${DEMO_END_DATE}'` : `NOW()`;
+    const lastStart = isDemoUser
+      ? `DATE '${DEMO_START_DATE}' - INTERVAL '7 days'`
+      : `NOW() - INTERVAL '14 days'`;
+    const lastEnd = isDemoUser ? `DATE '${DEMO_START_DATE}'` : `NOW() - INTERVAL '7 days'`;
+
     // --- QUERY A: Metrics Card (Current vs Last Week) ---
-    // NOTE: Menggunakan casting ::timestamp agar aman dari error "operator does not exist"
     const queryMetrics = {
       text: `
         SELECT 
           -- Study Time (Seconds)
-          COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '7 days'), 0) as current_time,
-          COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '14 days' AND created_at::timestamp < NOW() - INTERVAL '7 days'), 0) as last_week_time,
+          COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}), 0) as current_time,
+          COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}), 0) as last_week_time,
           
           -- Modules Completed
-          COUNT(id) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '7 days') as current_modules,
-          COUNT(id) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '14 days' AND created_at::timestamp < NOW() - INTERVAL '7 days') as last_week_modules,
+          COUNT(id) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}) as current_modules,
+          COUNT(id) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}) as last_week_modules,
 
           -- Quiz Score
-          COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '7 days'), 0) as current_score,
-          COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= NOW() - INTERVAL '14 days' AND created_at::timestamp < NOW() - INTERVAL '7 days'), 0) as last_week_score
+          COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}), 0) as current_score,
+          COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}), 0) as last_week_score
         FROM developer_journey_completions
         WHERE user_id = $1
       `,
@@ -37,12 +63,15 @@ class TrackingsService {
       text: `
         SELECT COUNT(DISTINCT last_viewed::timestamp::date) as active_days
         FROM developer_journey_trackings
-        WHERE developer_id = $1 AND last_viewed::timestamp >= NOW() - INTERVAL '7 days'
+        WHERE developer_id = $1 AND last_viewed::timestamp >= ${currentStart} AND last_viewed::timestamp < ${currentEnd}
       `,
       values: [userId],
     };
 
     // --- QUERY C: Chart (Senin - Minggu) ---
+    // Menggunakan tanggal mulai minggu demo jika user adalah demo
+    const chartWeekStart = isDemoUser ? `DATE '${DEMO_START_DATE}'` : `DATE_TRUNC('week', NOW())`;
+
     const queryChart = {
       text: `
         WITH daily_data AS (
@@ -50,15 +79,15 @@ class TrackingsService {
                 last_viewed::timestamp::date as day,
                 COUNT(*) as sessions
             FROM developer_journey_trackings
-            WHERE developer_id = $1 AND last_viewed::timestamp >= DATE_TRUNC('week', NOW())
+            WHERE developer_id = $1 AND last_viewed::timestamp >= ${chartWeekStart} AND last_viewed::timestamp < ${chartWeekStart} + INTERVAL '7 days'
             GROUP BY 1
         )
         SELECT 
             d.day::date,
             COALESCE(dd.sessions, 0) * 0.5 as estimated_hours 
         FROM generate_series(
-            DATE_TRUNC('week', NOW()), 
-            DATE_TRUNC('week', NOW()) + INTERVAL '6 days', 
+            ${chartWeekStart}::timestamp, 
+            ${chartWeekStart}::timestamp + INTERVAL '6 days', 
             '1 day'
         ) d(day)
         LEFT JOIN daily_data dd ON d.day = dd.day
@@ -106,9 +135,9 @@ class TrackingsService {
     const lastScore = (parseFloat(m.last_week_score) || 0) * 20;
     const diffScore = currentScore - lastScore;
 
-    // Insight Logic Sederhana
-    const styles = ["Fast Learner", "Consistent Learner", "Reflective Learner"];
-    const styleIndex = currentScore > 90 ? 0 : activeDays >= 4 ? 1 : 2;
+    // --- PERSONA LOGIC: Mengambil dari user_learning_clusters ---
+    const learnerType = await this._getPersonaFromClusterTable(userId);
+    const defaultLearner = "Consistent Learner"; // Default jika tidak ada di tabel
 
     return {
       metrics_cards: {
@@ -129,15 +158,22 @@ class TrackingsService {
           days_active: `${activeDays} days`,
         },
       },
+      // Trend Chart
       learning_trend_chart: resChart.rows.map((r) => parseFloat(r.estimated_hours)),
+
+      // Today's Recommendation
       todays_recommendation: lastActivity
         ? `Lanjutkan: ${lastActivity.name} - ${lastActivity.title}`
         : "Mulai petualangan belajarmu hari ini!",
+
+      // 🆕 PERSONAL INSIGHT: Sekarang Dinamis 🆕
       personal_insight_summary: `Gaya belajarmu terdeteksi sebagai ${
-        styles[styleIndex]
+        learnerType || defaultLearner
       } (confidence: 78%). Minggu ini kamu belajar total ${currentHours.toFixed(
         1
       )} jam. Rekomendasi: Pertahankan konsistensi harianmu!`,
+
+      // Module Recommendations (dibiarkan statis karena tidak ada logic yang tersedia)
       module_recommendations: [
         { title: "Advanced Backend Security", reason: "Cocok untuk Fast Learner" },
         { title: "Database Optimization", reason: "Melengkapi skill SQL kamu" },
@@ -146,7 +182,7 @@ class TrackingsService {
   }
 
   // ==========================================================
-  // 2. MY COURSES (/api/my-courses)
+  // 2. MY COURSES (/api/my-courses) -- (Tidak diubah, hanya ditambahkan)
   // ==========================================================
   async getMyCourses(userId) {
     const query = {
@@ -191,7 +227,7 @@ class TrackingsService {
   }
 
   // ==========================================================
-  // 3. LOG ACTIVITY (Core Function)
+  // 3. LOG ACTIVITY (Core Function) -- (Tidak diubah, hanya ditambahkan)
   // ==========================================================
   async logActivity({ journeyId, tutorialId, userId }) {
     const timeNow = new Date().toISOString();
@@ -221,7 +257,7 @@ class TrackingsService {
     }
   }
 
-  // Legacy support
+  // Legacy support -- (Tidak diubah, hanya ditambahkan)
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT t.id, t.status, t.last_viewed, j.name as journey_name, tut.title as tutorial_title 
