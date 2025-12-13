@@ -8,12 +8,12 @@ class InsightsHandler {
   async getStudentInsightsHandler(request) {
     const { id: userId } = request.auth.credentials;
 
-    // Memanggil logic cerdas dari service (AI/ML logic ada di sini nanti)
-    const insights = await this._service.getStudentInsights(userId);
+    // ⚠️ PERBAIKAN DI SINI: Panggil nama method yang BARU di Service
+    const data = await this._service.getLearningInsights(userId);
 
     return {
       status: "success",
-      data: insights, // Langsung return object data
+      data: data, // Data langsung dikirim
     };
   }
 }

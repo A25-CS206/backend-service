@@ -1,40 +1,31 @@
 const routes = (handler) => [
-  // --- 1. FITUR LAMA (Tetap Dipertahankan) ---
   {
     method: "POST",
-    path: "/trackings", // Untuk mencatat user membuka materi
+    path: "/trackings",
     handler: handler.postTrackingHandler,
-    options: {
-      auth: "learning_jwt",
-    },
+    options: { auth: "learning_jwt" },
   },
   {
     method: "GET",
-    path: "/trackings/me", // Untuk melihat log history detail
+    path: "/trackings/me",
     handler: handler.getStudentActivitiesHandler,
-    options: {
-      auth: "learning_jwt",
-    },
+    options: { auth: "learning_jwt" },
   },
 
-  // --- 2. FITUR BARU UNTUK NAUFAL (DASHBOARD) ---
+  // DASHBOARD
   {
     method: "GET",
-    path: "/dashboard", // Endpoint: http://localhost:5000/dashboard
+    path: "/dashboard",
     handler: handler.getDashboardStatisticsHandler,
-    options: {
-      auth: "learning_jwt", // Wajib login untuk tahu data user siapa
-    },
+    options: { auth: "learning_jwt" },
   },
 
-  // --- 3. FITUR BARU UNTUK NAUFAL (MY COURSES) ---
+  // MY COURSES (Ini yang akan menampilkan list journey user)
   {
     method: "GET",
-    path: "/my-courses", // Endpoint: http://localhost:5000/my-courses
+    path: "/my-courses",
     handler: handler.getMyCoursesHandler,
-    options: {
-      auth: "learning_jwt",
-    },
+    options: { auth: "learning_jwt" },
   },
 ];
 
