@@ -1,11 +1,11 @@
 const { nanoid } = require("nanoid");
 const InvariantError = require("../../exceptions/InvariantError");
-const { Pool } = require("pg"); // Diimpor ulang untuk kejelasan
+const { Pool } = require("pg");
 
-// --- KONSTANTA (Diposisikan di luar atau di dalam file) ---
+// --- KONSTANTA (Sesuaikan jika tanggal demo berubah) ---
 const DEMO_USER_ID = "user-f5KSPirteftx8lLo";
-const DEMO_START_DATE = "2025-12-01"; // Tanggal dimulainya data demo
-const DEMO_END_DATE = "2025-12-08"; // Akhir dari "Current Week" demo (7 hari setelah start)
+const DEMO_START_DATE = "2025-12-01"; // Awal minggu demo
+const DEMO_END_DATE = "2025-12-08"; // Akhir minggu demo
 
 class TrackingsService {
   constructor(pool) {
@@ -22,6 +22,25 @@ class TrackingsService {
     return result.rows.length > 0 ? result.rows[0].learner_type : null;
   }
 
+  // --- HELPER UNTUK DETAIL DESKRIPSI PERSONA ---
+  _getStyleDetail(labelName) {
+    const details = {
+      "Fast Learner": {
+        desc: "You process information quickly and prefer fast-paced content.",
+        confidence: "90%",
+      },
+      "Consistent Learner": {
+        desc: "You have a steady study habit and retain information through repetition.",
+        confidence: "95%",
+      },
+      "Reflective Learner": {
+        desc: "You prefer to dive deep into topics and review materials thoroughly.",
+        confidence: "85%",
+      },
+    };
+    return details[labelName] || details["Consistent Learner"];
+  }
+
   // ==========================================================
   // 1. DASHBOARD OVERVIEW (/api/dashboard)
   // ==========================================================
@@ -29,7 +48,8 @@ class TrackingsService {
     const isDemoUser = userId === DEMO_USER_ID;
 
     // --- Dynamic Date Handling (Menggunakan tanggal demo atau NOW() normal) ---
-    // Jika user adalah demo, gunakan rentang 2025-12-01 hingga 2025-12-08
+    // Pastikan casting dilakukan di luar string SQL jika menggunakan parameter $1,
+    // Di sini kita menggunakan string langsung karena nilainya tergantung logika JS IF/ELSE.
     const currentStart = isDemoUser ? `DATE '${DEMO_START_DATE}'` : `NOW() - INTERVAL '7 days'`;
     const currentEnd = isDemoUser ? `DATE '${DEMO_END_DATE}'` : `NOW()`;
     const lastStart = isDemoUser
@@ -41,15 +61,12 @@ class TrackingsService {
     const queryMetrics = {
       text: `
         SELECT 
-          -- Study Time (Seconds)
           COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}), 0) as current_time,
           COALESCE(SUM(study_duration) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}), 0) as last_week_time,
           
-          -- Modules Completed
           COUNT(id) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}) as current_modules,
           COUNT(id) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}) as last_week_modules,
 
-          -- Quiz Score
           COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= ${currentStart} AND created_at::timestamp < ${currentEnd}), 0) as current_score,
           COALESCE(AVG(avg_submission_rating) FILTER (WHERE created_at::timestamp >= ${lastStart} AND created_at::timestamp < ${lastEnd}), 0) as last_week_score
         FROM developer_journey_completions
@@ -69,7 +86,6 @@ class TrackingsService {
     };
 
     // --- QUERY C: Chart (Senin - Minggu) ---
-    // Menggunakan tanggal mulai minggu demo jika user adalah demo
     const chartWeekStart = isDemoUser ? `DATE '${DEMO_START_DATE}'` : `DATE_TRUNC('week', NOW())`;
 
     const queryChart = {
@@ -109,12 +125,17 @@ class TrackingsService {
       values: [userId],
     };
 
+    // --- Eksekusi dan Ambil Persona ---
     const [resMetrics, resCons, resChart, resRec] = await Promise.all([
       this._pool.query(queryMetrics),
       this._pool.query(queryConsistency),
       this._pool.query(queryChart),
       this._pool.query(queryRec),
     ]);
+
+    const learnerType = await this._getPersonaFromClusterTable(userId);
+    const personaDetails = this._getStyleDetail(learnerType);
+    const defaultLearner = "Consistent Learner";
 
     // --- CALCULATION LOGIC ---
     const m = resMetrics.rows[0];
@@ -135,11 +156,21 @@ class TrackingsService {
     const lastScore = (parseFloat(m.last_week_score) || 0) * 20;
     const diffScore = currentScore - lastScore;
 
-    // --- PERSONA LOGIC: Mengambil dari user_learning_clusters ---
-    const learnerType = await this._getPersonaFromClusterTable(userId);
-    const defaultLearner = "Consistent Learner"; // Default jika tidak ada di tabel
+    // 🆕 Membuat String Persona Summary 🆕
+    const insightSummary = `Gaya belajarmu terdeteksi sebagai ${
+      learnerType || defaultLearner
+    } (confidence: 78%). Minggu ini kamu belajar total ${currentHours.toFixed(
+      1
+    )} jam. Rekomendasi: Pertahankan konsistensi harianmu!`;
 
     return {
+      // 🆕 TAMBAHAN LEARNING STYLE DETECTION 🆕
+      learning_style_detection: {
+        detected_style: learnerType || defaultLearner,
+        model_confidence: personaDetails.confidence,
+        description: personaDetails.desc,
+      },
+
       metrics_cards: {
         total_study_time: {
           value: `${currentHours.toFixed(1)} h`,
@@ -158,22 +189,13 @@ class TrackingsService {
           days_active: `${activeDays} days`,
         },
       },
-      // Trend Chart
       learning_trend_chart: resChart.rows.map((r) => parseFloat(r.estimated_hours)),
-
-      // Today's Recommendation
       todays_recommendation: lastActivity
         ? `Lanjutkan: ${lastActivity.name} - ${lastActivity.title}`
         : "Mulai petualangan belajarmu hari ini!",
 
-      // 🆕 PERSONAL INSIGHT: Sekarang Dinamis 🆕
-      personal_insight_summary: `Gaya belajarmu terdeteksi sebagai ${
-        learnerType || defaultLearner
-      } (confidence: 78%). Minggu ini kamu belajar total ${currentHours.toFixed(
-        1
-      )} jam. Rekomendasi: Pertahankan konsistensi harianmu!`,
+      personal_insight_summary: insightSummary,
 
-      // Module Recommendations (dibiarkan statis karena tidak ada logic yang tersedia)
       module_recommendations: [
         { title: "Advanced Backend Security", reason: "Cocok untuk Fast Learner" },
         { title: "Database Optimization", reason: "Melengkapi skill SQL kamu" },
@@ -182,7 +204,7 @@ class TrackingsService {
   }
 
   // ==========================================================
-  // 2. MY COURSES (/api/my-courses) -- (Tidak diubah, hanya ditambahkan)
+  // 2. MY COURSES (/api/my-courses)
   // ==========================================================
   async getMyCourses(userId) {
     const query = {
@@ -227,7 +249,7 @@ class TrackingsService {
   }
 
   // ==========================================================
-  // 3. LOG ACTIVITY (Core Function) -- (Tidak diubah, hanya ditambahkan)
+  // 3. LOG ACTIVITY (Core Function)
   // ==========================================================
   async logActivity({ journeyId, tutorialId, userId }) {
     const timeNow = new Date().toISOString();
@@ -257,7 +279,7 @@ class TrackingsService {
     }
   }
 
-  // Legacy support -- (Tidak diubah, hanya ditambahkan)
+  // Legacy support
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT t.id, t.status, t.last_viewed, j.name as journey_name, tut.title as tutorial_title 
