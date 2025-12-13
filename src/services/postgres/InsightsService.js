@@ -1,161 +1,225 @@
 const { Pool } = require("pg");
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: false } : false,
-});
+const axios = require("axios");
+const InvariantError = require("../../exceptions/InvariantError");
 
 class InsightsService {
-  constructor() {
-    this._pool = pool;
+  constructor(pool) {
+    this._pool = pool; // Menerima pool dari server.js (DI)
   }
 
-  // --- 1. DASHBOARD UTAMA ---
-  async getDashboardStats(userId) {
-    const queryStats = {
-      text: `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp)) / 3600), 0) as total_hours,
-            COUNT(CASE WHEN status = 'completed' THEN 1 END) as modules_completed FROM developer_journey_trackings WHERE developer_id = $1`,
-      values: [userId],
-    };
+  // ==========================================================
+  // 1. LEARNING INSIGHTS (/api/insights)
+  // ==========================================================
+  async getLearningInsights(userId) {
+    // 1. Ambil Data Agregat User dari DB
+    const features = await this._getFeaturesFromDB(userId);
 
-    const queryScore = {
-      text: `SELECT COALESCE(AVG(score), 0) as avg_score FROM exam_results r JOIN exam_registrations reg ON r.exam_registration_id = reg.id WHERE reg.examinees_id = $1`,
-      values: [userId],
-    };
+    // 2. Prediksi ML (Default Fallback jika ML mati)
+    let predictedLabel = "Consistent Learner";
+    let confidence = 0.65;
 
-    const queryTrend = {
-      text: `SELECT TRIM(TO_CHAR(last_viewed::timestamp, 'Day')) as day_name, SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp)) / 3600) as hours
-             FROM developer_journey_trackings WHERE developer_id = $1 AND last_viewed::timestamp >= NOW() - INTERVAL '7 days' GROUP BY day_name`,
-      values: [userId],
-    };
+    if (process.env.ML_SERVICE_URL) {
+      try {
+        // Payload sesuai yang diminta ML Service
+        const payload = {
+          avg_quiz_score: features.avg_quiz_score,
+          total_duration: features.total_duration,
+          modules_completed: features.modules_count,
+        };
 
-    const queryCluster = {
-      text: "SELECT learner_type FROM user_learning_clusters WHERE user_id = $1",
-      values: [userId],
-    };
+        // Hit Endpoint ML
+        const mlRes = await axios.post(process.env.ML_SERVICE_URL, payload);
 
-    const [resStats, resScore, resTrend, resCluster] = await Promise.all([
-      this._pool.query(queryStats),
-      this._pool.query(queryScore),
-      this._pool.query(queryTrend),
-      this._pool.query(queryCluster),
-    ]);
+        // Handle response (bisa berupa label string atau cluster ID)
+        if (mlRes.data.label) {
+          predictedLabel = mlRes.data.label;
+        } else if (mlRes.data.cluster !== undefined) {
+          const mapStyle = this._mapStyle(mlRes.data.cluster);
+          predictedLabel = mapStyle.name;
+        }
 
-    const stats = resStats.rows[0];
-    const avgScore = parseFloat(resScore.rows[0].avg_score).toFixed(0);
-    const learnerType = resCluster.rows[0]?.learner_type || "Consistent Learner";
-    const totalHours = parseFloat(stats.total_hours).toFixed(1);
+        if (mlRes.data.confidence) confidence = mlRes.data.confidence;
+      } catch (error) {
+        console.warn("⚠️ ML Service Unreachable, using fallback logic.");
+        // Logic Fallback Sederhana
+        if (features.avg_quiz_score > 4.5) predictedLabel = "Fast Learner";
+        else if (features.active_days >= 4) predictedLabel = "Consistent Learner";
+        else predictedLabel = "Reflective Learner";
+      }
+    }
 
-    const daysMap = {
-      Monday: 0,
-      Tuesday: 0,
-      Wednesday: 0,
-      Thursday: 0,
-      Friday: 0,
-      Saturday: 0,
-      Sunday: 0,
-    };
-    resTrend.rows.forEach((r) => {
-      if (daysMap[r.day_name] !== undefined) daysMap[r.day_name] = parseFloat(r.hours);
-    });
-
-    const learningTrend = Object.keys(daysMap).map((d) => ({
-      day: d.substring(0, 3),
-      hours: parseFloat(daysMap[d].toFixed(1)),
-    }));
+    // 3. Generate Data Lengkap
+    const styleDetail = this._getStyleDetail(predictedLabel);
+    const swAnalysis = this._generateSW(features, predictedLabel);
+    const consistencyChart = await this._getConsistencyChart(userId);
 
     return {
-      stats: {
-        total_hours_studied: parseFloat(totalHours),
-        modules_completed: parseInt(stats.modules_completed),
-        average_quiz_score: parseInt(avgScore),
+      learning_style_detection: {
+        detected_style: predictedLabel,
+        model_confidence: `${(confidence * 100).toFixed(0)}%`,
+        description: styleDetail.desc,
       },
-      learning_trend: learningTrend,
-      personal_insight_summary: {
-        id: `Gaya belajarmu terdeteksi sebagai '${learnerType}'. Minggu ini kamu belajar total ${totalHours} jam.`,
-        en: `Your learning style is detected as '${learnerType}'. This week you studied a total of ${totalHours} hours.`,
+      weekly_recommendations: styleDetail.recommendations,
+      weekly_metrics_summary: {
+        average_study_time: `${(features.total_duration / 3600 / 7).toFixed(1)} hours/day`,
+        modules_completed: `${features.modules_count} modules`,
+        average_quiz_score: `${(features.avg_quiz_score * 20).toFixed(0)} pts`,
+        active_days: `${features.active_days}/7 days`,
       },
-      today_recommendation: {
-        journey_id: "journey-web-01",
-        title: "Belajar Dasar Pemrograman Web",
-        reason: { id: "Lanjutkan momentummu!", en: "Keep the momentum!" },
-      },
+      strengths_and_weaknesses: swAnalysis,
+      quiz_performance_comparison: [
+        { quiz: "Module 1 Quiz", your_score: 85, average_score: 78 },
+        { quiz: "Module 2 Quiz", your_score: 90, average_score: 82 },
+        {
+          quiz: "Module 3 Quiz",
+          your_score: (features.avg_quiz_score * 20).toFixed(0),
+          average_score: 75,
+        },
+      ],
+      consistency_trend: consistencyChart,
     };
   }
 
-  // --- 2. DEEP ANALYTICS ---
-  async getDeepInsights(userId) {
-    const queryMetrics = {
-      text: `SELECT COUNT(*) as total_sessions, COALESCE(AVG(score), 0) as avg_score FROM exam_results r JOIN exam_registrations reg ON r.exam_registration_id = reg.id WHERE reg.examinees_id = $1`,
+  // --- HELPER METHODS ---
+
+  async _getFeaturesFromDB(userId) {
+    const query = {
+      text: `
+        SELECT 
+          COALESCE(AVG(avg_submission_rating), 0) as avg_score,
+          COALESCE(SUM(study_duration), 0) as total_duration,
+          COUNT(id) as modules_count
+        FROM developer_journey_completions 
+        WHERE user_id = $1
+      `,
       values: [userId],
     };
 
-    const queryGlobal = {
-      text: `SELECT COALESCE(AVG(score), 0) as global_score FROM exam_results`,
+    // Fitur Active Days
+    const queryActive = {
+      text: "SELECT COUNT(DISTINCT last_viewed::date) as cnt FROM developer_journey_trackings WHERE developer_id = $1 AND last_viewed >= NOW() - INTERVAL '7 days'",
+      values: [userId],
     };
 
-    const [resMetrics, resGlobal] = await Promise.all([
-      this._pool.query(queryMetrics),
-      this._pool.query(queryGlobal),
+    const [resMetric, resActive] = await Promise.all([
+      this._pool.query(query),
+      this._pool.query(queryActive),
     ]);
 
-    const userScore = parseFloat(resMetrics.rows[0].avg_score);
-    const globalScore = parseFloat(resGlobal.rows[0].global_score);
-    const totalSessions = parseInt(resMetrics.rows[0].total_sessions);
+    return {
+      avg_quiz_score: parseFloat(resMetric.rows[0].avg_score) || 0,
+      total_duration: parseInt(resMetric.rows[0].total_duration) || 0,
+      modules_count: parseInt(resMetric.rows[0].modules_count) || 0,
+      active_days: parseInt(resActive.rows[0].cnt) || 0,
+    };
+  }
 
+  _getStyleDetail(labelName) {
+    const details = {
+      "Fast Learner": {
+        desc: "You process information quickly and prefer fast-paced content.",
+        recommendations: [
+          "Challenge yourself with advanced modules immediately.",
+          "Take complex quizzes to ensure deep understanding.",
+        ],
+      },
+      "Consistent Learner": {
+        desc: "You have a steady study habit and retain information through repetition.",
+        recommendations: [
+          "Maintain your excellent daily streak.",
+          "Try increasing session duration by 10% next week.",
+        ],
+      },
+      "Reflective Learner": {
+        desc: "You prefer to dive deep into topics and review materials thoroughly.",
+        recommendations: [
+          "Focus on summarization after each session.",
+          "Break down complex modules into smaller chunks.",
+        ],
+      },
+    };
+    return details[labelName] || details["Consistent Learner"];
+  }
+
+  _mapStyle(clusterId) {
+    const map = {
+      0: { name: "Fast Learner" },
+      1: { name: "Consistent Learner" },
+      2: { name: "Reflective Learner" },
+    };
+    return map[clusterId] || map[1];
+  }
+
+  _generateSW(features, label) {
     const strengths = [];
     const weaknesses = [];
 
-    if (userScore > 85) {
+    // Strength Logic
+    if (features.avg_quiz_score >= 4.0) {
       strengths.push({
-        type: "retention",
-        title: { id: "Daya Ingat Tinggi", en: "High Retention Rate" },
-        description: {
-          id: "Skor kuis rata-rata anda diatas 85%.",
-          en: "Your average quiz score is above 85%.",
-        },
+        title: "High Accuracy",
+        explanation: "Skor kuis rata-rata tinggi menunjukkan pemahaman konsep yang solid.",
+      });
+    }
+    if (label === "Consistent Learner" || features.active_days >= 4) {
+      strengths.push({
+        title: "High Consistency",
+        explanation: "Frekuensi belajar yang stabil membantu retensi jangka panjang.",
       });
     }
 
-    if (totalSessions < 3 && userScore > 70) {
+    // Weakness Logic
+    if (features.active_days < 3) {
       weaknesses.push({
-        type: "consistency",
-        title: { id: "Kurang Konsisten", en: "Inconsistent Access" },
-        description: { id: "Anda jarang mengakses materi.", en: "You rarely access materials." },
+        title: "Inconsistent Schedule",
+        explanation: "Jeda panjang antar sesi dapat menurunkan efektivitas model belajar.",
+      });
+    }
+    if (features.total_duration < 1800) {
+      weaknesses.push({
+        title: "Low Exposure",
+        explanation: "Data input terlalu sedikit untuk analisis maksimal.",
       });
     }
 
+    // Default Filler
     if (strengths.length === 0)
       strengths.push({
-        type: "general",
-        title: { id: "Potensi", en: "Potential" },
-        description: { id: "Teruslah belajar!", en: "Keep learning!" },
+        title: "Developing",
+        explanation: "Terus belajar untuk membangun profil data yang kuat.",
+      });
+    if (weaknesses.length === 0)
+      weaknesses.push({
+        title: "Balanced Profile",
+        explanation: "Tidak ada kelemahan signifikan yang terdeteksi minggu ini.",
       });
 
-    return {
-      profile: {
-        learning_style: { id: "Tipe Penjelajah", en: "Explorer Type" },
-        model_confidence: totalSessions > 5 ? "High" : "Low",
-      },
-      weekly_metrics: {
-        avg_hours_per_day: 1.5,
-        modules_completed: 4,
-        avg_quiz_score: parseInt(userScore),
-      },
-      performance_analysis: { strengths, weaknesses },
-      comparison: {
-        user_avg_score: parseInt(userScore),
-        global_avg_score: parseInt(globalScore),
-        message: {
-          id:
-            userScore >= globalScore
-              ? "Hebat! Anda di atas rata-rata."
-              : "Ayo kejar ketertinggalan!",
-          en: userScore >= globalScore ? "Great! You are above average." : "Let's catch up!",
-        },
-      },
-      consistency_trend: [],
+    return { strengths, weaknesses };
+  }
+
+  async _getConsistencyChart(userId) {
+    // Generate data 30 hari terakhir
+    const query = {
+      text: `
+            SELECT 
+                d.day::date as date,
+                CASE WHEN t.id IS NOT NULL THEN true ELSE false END as active,
+                COALESCE(COUNT(c.id), 0) as modules_completed
+            FROM generate_series(NOW() - INTERVAL '29 days', NOW(), '1 day') d(day)
+            LEFT JOIN developer_journey_trackings t ON t.last_viewed::date = d.day::date AND t.developer_id = $1
+            LEFT JOIN developer_journey_completions c ON c.created_at::date = d.day::date AND c.user_id = $1
+            GROUP BY 1, 2
+            ORDER BY 1 ASC
+        `,
+      values: [userId],
     };
+
+    const res = await this._pool.query(query);
+    return res.rows.map((row) => ({
+      date: row.date.toISOString().split("T")[0], // YYYY-MM-DD
+      active: row.active,
+      modules_completed: parseInt(row.modules_completed),
+    }));
   }
 }
 
