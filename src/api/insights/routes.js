@@ -1,20 +1,15 @@
 const routes = (handler) => [
   {
     method: "GET",
-    path: "/insights/me",
-    handler: handler.getInsightHandler,
-    options: {
-      auth: "learning_jwt", // Wajib Login
-    },
+    path: "/dashboard",
+    handler: handler.getDashboardHandler,
+    options: { auth: "learning_jwt" },
   },
   {
     method: "GET",
-    path: "/dashboard", // Endpoint Baru untuk Dashboard
-    handler: handler.getDashboardHandler,
-    options: {
-      auth: "learning_jwt", // Wajib Login
-    },
+    path: "/insights/me",
+    handler: handler.getInsightsHandler,
+    options: { auth: "learning_jwt" },
   },
 ];
-
 module.exports = routes;

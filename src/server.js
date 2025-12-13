@@ -3,6 +3,7 @@ const Hapi = require("@hapi/hapi");
 const Jwt = require("@hapi/jwt");
 const ClientError = require("./exceptions/ClientError");
 
+// Import Plugins & Services
 const users = require("./api/users");
 const UsersService = require("./services/postgres/UsersService");
 const UsersValidator = require("./validator/users");
@@ -19,6 +20,7 @@ const trackings = require("./api/trackings");
 const TrackingsService = require("./services/postgres/TrackingsService");
 const TrackingsValidator = require("./validator/trackings");
 
+// >>> FITUR BARU <<<
 const insights = require("./api/insights");
 const InsightsService = require("./services/postgres/InsightsService");
 
@@ -26,7 +28,7 @@ const init = async () => {
   const usersService = new UsersService();
   const journeysService = new JourneysService();
   const trackingsService = new TrackingsService();
-  const insightsService = new InsightsService();
+  const insightsService = new InsightsService(); // Instantiate
 
   const server = Hapi.server({
     port: process.env.PORT || 5000,
@@ -35,12 +37,6 @@ const init = async () => {
       cors: {
         origin: ["*"],
         headers: ["Accept", "Authorization", "Content-Type", "If-None-Match"],
-        additionalHeaders: [
-          "cache-control",
-          "x-requested-with",
-          "access-control-request-headers",
-          "access-control-request-method",
-        ],
       },
     },
   });
@@ -49,89 +45,49 @@ const init = async () => {
 
   server.auth.strategy("learning_jwt", "jwt", {
     keys: process.env.ACCESS_TOKEN_KEY,
-    verify: {
-      aud: false,
-      iss: false,
-      sub: false,
-      maxAgeSec: process.env.ACCESS_TOKEN_AGE,
-    },
-    validate: (artifacts) => {
-      return {
-        isValid: true,
-        credentials: {
-          id: artifacts.decoded.payload.id,
-          role: artifacts.decoded.payload.role,
-        },
-      };
-    },
+    verify: { aud: false, iss: false, sub: false, maxAgeSec: process.env.ACCESS_TOKEN_AGE },
+    validate: (artifacts) => ({
+      isValid: true,
+      credentials: { id: artifacts.decoded.payload.id, role: artifacts.decoded.payload.role },
+    }),
   });
 
   await server.register([
-    {
-      plugin: users,
-      options: { service: usersService, validator: UsersValidator },
-    },
+    { plugin: users, options: { service: usersService, validator: UsersValidator } },
     {
       plugin: authentications,
       options: {
         authenticationsService: null,
-        usersService: usersService,
+        usersService,
         tokenManager: TokenManager,
         validator: AuthenticationsValidator,
       },
     },
-    {
-      plugin: journeys,
-      options: { service: journeysService, validator: JourneysValidator },
-    },
-    {
-      plugin: trackings,
-      options: { service: trackingsService, validator: TrackingsValidator },
-    },
-    {
-      plugin: insights,
-      options: { service: insightsService },
-    },
+    { plugin: journeys, options: { service: journeysService, validator: JourneysValidator } },
+    { plugin: trackings, options: { service: trackingsService, validator: TrackingsValidator } },
+    { plugin: insights, options: { service: insightsService } }, // Register Plugin Baru
   ]);
 
   server.route({
     method: "GET",
     path: "/",
-    handler: () => {
-      return {
-        status: "online",
-        message: "Backend API Learning System is Running! 🚀",
-        version: "1.0.0",
-      };
-    },
-  });
-
-  server.route({
-    method: "GET",
-    path: "/favicon.ico",
-    handler: (h) => h.response().code(204),
+    handler: () => ({
+      status: "online",
+      message: "Backend API Learning System is Running! 🚀",
+      version: "1.0.0",
+    }),
   });
 
   server.ext("onPreResponse", (request, h) => {
     const { response } = request;
-
     if (response instanceof Error) {
       if (response instanceof ClientError) {
-        const newResponse = h.response({
-          status: "fail",
-          message: response.message,
-        });
+        const newResponse = h.response({ status: "fail", message: response.message });
         newResponse.code(response.statusCode);
         return newResponse;
       }
-
-      if (!response.isServer) {
-        return h.continue;
-      }
-
+      if (!response.isServer) return h.continue;
       console.error("Server Error:", response);
-      console.error("Message:", response.message);
-
       const newResponse = h.response({
         status: "error",
         message: "Maaf, terjadi kegagalan pada server kami.",
@@ -139,7 +95,6 @@ const init = async () => {
       newResponse.code(500);
       return newResponse;
     }
-
     return h.continue;
   });
 

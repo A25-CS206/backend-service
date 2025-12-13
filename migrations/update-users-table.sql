@@ -1,7 +1,0 @@
-ALTER TABLE users 
-ADD COLUMN phone VARCHAR(20),
-ADD COLUMN image_path TEXT,
-ADD COLUMN city VARCHAR(100),
-ADD COLUMN city_id INT, 
-ADD COLUMN user_verification_status BOOLEAN DEFAULT FALSE,
-ADD COLUMN deleted_at TEXT;

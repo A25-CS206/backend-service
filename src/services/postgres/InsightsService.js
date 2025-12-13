@@ -1,199 +1,51 @@
 const { Pool } = require("pg");
-const axios = require("axios");
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: false } : false,
+});
 
 class InsightsService {
   constructor() {
-    // Inisialisasi Database Pool (Mendukung Vercel/Neon SSL)
-    if (process.env.DATABASE_URL) {
-      this._pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
-      });
-    } else {
-      this._pool = new Pool();
-    }
+    this._pool = pool;
   }
 
-  // =================================================================
-  // METHOD 1: GENERATE INSIGHT (Memicu AI Python & Menyimpan Hasil)
-  // =================================================================
-  async generateStudentInsight(userId) {
-    // 1. QUERY DATABASE: Ambil Data Raw Tracking (Query Aman)
-    const query = {
-      text: `
-        SELECT 
-          COUNT(id) as total_materials,
-          MIN(first_opened_at) as first_active,
-          MAX(last_viewed) as last_active,
-          COUNT(DISTINCT DATE(last_viewed)) as active_days
-        FROM developer_journey_trackings 
-        WHERE developer_id = $1
-      `,
-      values: [userId],
-    };
-
-    const result = await this._pool.query(query);
-    const stats = result.rows[0];
-
-    // Cek jika data kosong (User baru)
-    if (parseInt(stats.total_materials) === 0) {
-      return {
-        cluster: -1,
-        learner_type: "New Learner",
-        description: "Belum cukup data aktivitas untuk dianalisis.",
-      };
-    }
-
-    // 2. FEATURE ENGINEERING (Menyiapkan Data untuk Python)
-    const totalMaterials = parseInt(stats.total_materials);
-
-    // Hitung selisih hari (Durasi aktif user dalam hari)
-    const start = new Date(stats.first_active);
-    const end = new Date(stats.last_active);
-    const diffTime = Math.abs(end - start);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
-
-    // Hitung 6 Fitur Utama
-    const avgMaterialsPerDay = totalMaterials / diffDays;
-    const totalWeeks = Math.ceil(diffDays / 7) || 1;
-    const avgLoginsPerWeek = parseInt(stats.active_days) / totalWeeks;
-    const loginVariance = 5.0; // Placeholder standar
-    const avgDuration = 15.0; // Placeholder standar
-
-    const payloadML = [
-      {
-        avg_materials_per_day: avgMaterialsPerDay,
-        total_materials: totalMaterials,
-        avg_duration_per_material: avgDuration,
-        total_weeks_active: totalWeeks,
-        avg_logins_per_week: avgLoginsPerWeek,
-        login_weekly_variance: loginVariance,
-      },
-    ];
-
-    try {
-      // 3. TEMBAK API PYTHON (Render/Railway)
-      const mlUrl = process.env.ML_SERVICE_URL || "http://localhost:8000/predict";
-
-      const response = await axios.post(mlUrl, payloadML);
-      const prediction = response.data[0];
-
-      // 4. SIMPAN HASIL KE TABEL CLUSTER (UPSERT Logic)
-      const querySave = {
-        text: `
-          INSERT INTO user_learning_clusters (user_id, cluster, learner_type, updated_at)
-          VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (user_id) 
-          DO UPDATE SET 
-            cluster = EXCLUDED.cluster, 
-            learner_type = EXCLUDED.learner_type,
-            updated_at = NOW()
-        `,
-        values: [userId, prediction.cluster, prediction.learner_type],
-      };
-
-      await this._pool.query(querySave);
-
-      return prediction;
-    } catch (error) {
-      console.error("ML Service Error:", error.message);
-      // Fallback response jika ML mati
-      return {
-        cluster: -99,
-        learner_type: "Unidentified",
-        description: "Layanan AI sedang tidak dapat dihubungi.",
-      };
-    }
-  }
-
-  // =================================================================
-  // METHOD 2: GET DASHBOARD STATS (Data Tampilan Front-End)
-  // =================================================================
+  // --- 1. DASHBOARD UTAMA ---
   async getDashboardStats(userId) {
-    // A. Query Insight AI (Ambil status Learner Type dari DB)
-    const queryInsight = {
-      text: "SELECT learner_type, cluster FROM user_learning_clusters WHERE user_id = $1",
-      values: [userId],
-    };
-
-    // B. Query Statistik Utama (Jam Belajar, Kelas Selesai, Consistency)
     const queryStats = {
-      text: `
-        SELECT 
-            COUNT(DISTINCT tutorial_id) filter (where status = 'completed') as completed_classes,
-            COALESCE(SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp))/3600), 0) as total_hours_all_time,
-            COALESCE(SUM(CASE 
-                WHEN last_viewed::timestamp >= NOW() - INTERVAL '7 days' 
-                THEN EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp))/3600 
-                ELSE 0 
-            END), 0) as total_hours_weekly,
-            COUNT(DISTINCT DATE(last_viewed)) filter (where last_viewed::timestamp >= NOW() - INTERVAL '7 days') as active_days_weekly
-        FROM developer_journey_trackings
-        WHERE developer_id = $1
-      `,
+      text: `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp)) / 3600), 0) as total_hours,
+            COUNT(CASE WHEN status = 'completed' THEN 1 END) as modules_completed FROM developer_journey_trackings WHERE developer_id = $1`,
       values: [userId],
     };
 
-    // C. Query Rata-rata Nilai Quiz
     const queryScore = {
-      text: `
-        SELECT COALESCE(AVG(score), 0) as avg_score 
-        FROM exam_results r
-        JOIN exam_registrations reg ON r.exam_registration_id = reg.id
-        WHERE reg.examinees_id = $1
-      `,
+      text: `SELECT COALESCE(AVG(score), 0) as avg_score FROM exam_results r JOIN exam_registrations reg ON r.exam_registration_id = reg.id WHERE reg.examinees_id = $1`,
       values: [userId],
     };
 
-    // D. Query Learning Trend (Grafik Batang Mingguan)
     const queryTrend = {
-      text: `
-          SELECT 
-            TRIM(TO_CHAR(last_viewed::timestamp, 'Day')) as day_name,
-            SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp))/3600) as hours
-          FROM developer_journey_trackings
-          WHERE developer_id = $1 
-            AND last_viewed::timestamp >= DATE_TRUNC('week', NOW()) 
-          GROUP BY day_name
-        `,
+      text: `SELECT TRIM(TO_CHAR(last_viewed::timestamp, 'Day')) as day_name, SUM(EXTRACT(EPOCH FROM (last_viewed::timestamp - first_opened_at::timestamp)) / 3600) as hours
+             FROM developer_journey_trackings WHERE developer_id = $1 AND last_viewed::timestamp >= NOW() - INTERVAL '7 days' GROUP BY day_name`,
       values: [userId],
     };
 
-    // E. Query REKOMENDASI (VERSI "WORKAROUND/AKAL-AKALAN")
-    // PENTING: Kita HANYA ambil 'id' dan 'name'.
-    // Kita TIDAK mengambil 'hours_to_study' agar tidak error 500 karena kolom DB tidak ada.
-    const queryRecs = {
-      text: `
-            SELECT id, name
-            FROM developer_journeys
-            WHERE id NOT IN (
-                SELECT DISTINCT journey_id FROM developer_journey_trackings WHERE developer_id = $1
-            )
-            LIMIT 2
-        `,
+    const queryCluster = {
+      text: "SELECT learner_type FROM user_learning_clusters WHERE user_id = $1",
       values: [userId],
     };
 
-    // Eksekusi Semua Query secara Paralel
-    const [resInsight, resStats, resScore, resTrend, resRecs] = await Promise.all([
-      this._pool.query(queryInsight),
+    const [resStats, resScore, resTrend, resCluster] = await Promise.all([
       this._pool.query(queryStats),
       this._pool.query(queryScore),
       this._pool.query(queryTrend),
-      this._pool.query(queryRecs),
+      this._pool.query(queryCluster),
     ]);
 
-    // --- PENGOLAHAN DATA (DATA PROCESSING) ---
-
-    const insight = resInsight.rows[0] || { learner_type: "Unidentified", cluster: -1 };
     const stats = resStats.rows[0];
     const avgScore = parseFloat(resScore.rows[0].avg_score).toFixed(0);
+    const learnerType = resCluster.rows[0]?.learner_type || "Consistent Learner";
+    const totalHours = parseFloat(stats.total_hours).toFixed(1);
 
-    // 1. Hitung Consistency Percentage
-    const activeDays = parseInt(stats.active_days_weekly);
-    const consistencyPercentage = Math.round((activeDays / 7) * 100);
-
-    // 2. Format Grafik Trend (Mapping Senin-Minggu)
     const daysMap = {
       Monday: 0,
       Tuesday: 0,
@@ -203,93 +55,106 @@ class InsightsService {
       Saturday: 0,
       Sunday: 0,
     };
-    resTrend.rows.forEach((row) => {
-      if (daysMap.hasOwnProperty(row.day_name)) {
-        daysMap[row.day_name] = parseFloat(row.hours);
-      }
+    resTrend.rows.forEach((r) => {
+      if (daysMap[r.day_name] !== undefined) daysMap[r.day_name] = parseFloat(r.hours);
     });
 
-    const learningTrend = Object.keys(daysMap).map((day) => ({
-      day: day.substring(0, 3),
-      value: parseFloat(daysMap[day].toFixed(1)),
+    const learningTrend = Object.keys(daysMap).map((d) => ({
+      day: d.substring(0, 3),
+      hours: parseFloat(daysMap[d].toFixed(1)),
     }));
 
-    // --- LOGIKA MANUAL: METADATA MAP (SOLUSI DB LEGACY) ---
-    // Karena kolom difficulty & hours tidak ada di DB, kita tulis manual di sini.
-    const METADATA_MAP = {
-      15: { difficulty: "expert", hours: 4 },
-      16: { difficulty: "beginner", hours: 12 },
-      // Default value kalau ID kursusnya lain
-      default: { difficulty: "intermediate", hours: 5 },
+    return {
+      stats: {
+        total_hours_studied: parseFloat(totalHours),
+        modules_completed: parseInt(stats.modules_completed),
+        average_quiz_score: parseInt(avgScore),
+      },
+      learning_trend: learningTrend,
+      personal_insight_summary: {
+        id: `Gaya belajarmu terdeteksi sebagai '${learnerType}'. Minggu ini kamu belajar total ${totalHours} jam.`,
+        en: `Your learning style is detected as '${learnerType}'. This week you studied a total of ${totalHours} hours.`,
+      },
+      today_recommendation: {
+        journey_id: "journey-web-01",
+        title: "Belajar Dasar Pemrograman Web",
+        reason: { id: "Lanjutkan momentummu!", en: "Keep the momentum!" },
+      },
+    };
+  }
+
+  // --- 2. DEEP ANALYTICS ---
+  async getDeepInsights(userId) {
+    const queryMetrics = {
+      text: `SELECT COUNT(*) as total_sessions, COALESCE(AVG(score), 0) as avg_score FROM exam_results r JOIN exam_registrations reg ON r.exam_registration_id = reg.id WHERE reg.examinees_id = $1`,
+      values: [userId],
     };
 
-    // 3. Mapping Recommendations dengan Metadata Map
-    const recommendations = resRecs.rows.map((row) => {
-      // Cek apakah ID ada di map, kalau tidak pakai default
-      const meta = METADATA_MAP[row.id] || METADATA_MAP["default"];
+    const queryGlobal = {
+      text: `SELECT COALESCE(AVG(score), 0) as global_score FROM exam_results`,
+    };
 
-      return {
-        id: row.id,
-        title: row.name,
-        difficulty: meta.difficulty, // Ambil dari JS
-        estimatedTime: `${meta.hours} hours`, // Ambil dari JS
-      };
-    });
+    const [resMetrics, resGlobal] = await Promise.all([
+      this._pool.query(queryMetrics),
+      this._pool.query(queryGlobal),
+    ]);
 
-    // 4. Format Achievements / Badges
-    const badgesList = [
-      {
-        id: "fast",
-        label: "Fast Learner",
-        icon: "⚡",
-        description: "Finish the module quickly",
-        earned: insight.cluster === 0,
-      },
-      {
-        id: "consistent",
-        label: "Consistent Learner",
-        icon: "📅",
-        description: "Regular and scheduled access",
-        earned: insight.cluster === 1,
-      },
-      {
-        id: "reflective",
-        label: "Reflective Learner",
-        icon: "🧠",
-        description: "Study in depth",
-        earned: insight.cluster === 2,
-      },
-    ];
+    const userScore = parseFloat(resMetrics.rows[0].avg_score);
+    const globalScore = parseFloat(resGlobal.rows[0].global_score);
+    const totalSessions = parseInt(resMetrics.rows[0].total_sessions);
 
-    // 5. Buat Kalimat Summary Dinamis
-    const totalHoursWeekly = parseFloat(stats.total_hours_weekly).toFixed(1);
-    let recommendationText = recommendations[0]
-      ? `Try starting "${recommendations[0].title}"`
-      : "Keep exploring new modules!";
+    const strengths = [];
+    const weaknesses = [];
 
-    const insightSummary = `Your learning style has been detected as ${insight.learner_type}. This week you studied a total of ${totalHoursWeekly} hours. Recommendation: ${recommendationText}.`;
+    if (userScore > 85) {
+      strengths.push({
+        type: "retention",
+        title: { id: "Daya Ingat Tinggi", en: "High Retention Rate" },
+        description: {
+          id: "Skor kuis rata-rata anda diatas 85%.",
+          en: "Your average quiz score is above 85%.",
+        },
+      });
+    }
 
-    // --- FINAL RETURN ---
+    if (totalSessions < 3 && userScore > 70) {
+      weaknesses.push({
+        type: "consistency",
+        title: { id: "Kurang Konsisten", en: "Inconsistent Access" },
+        description: { id: "Anda jarang mengakses materi.", en: "You rarely access materials." },
+      });
+    }
+
+    if (strengths.length === 0)
+      strengths.push({
+        type: "general",
+        title: { id: "Potensi", en: "Potential" },
+        description: { id: "Teruslah belajar!", en: "Keep learning!" },
+      });
+
     return {
-      learnerType: insight.learner_type,
-      cluster: insight.cluster,
-
-      // Kartu Atas
-      totalStudyTime: parseFloat(stats.total_hours_all_time).toFixed(1),
-      completedClasses: parseInt(stats.completed_classes),
-      averageQuizScore: parseInt(avgScore),
-      consistency: {
-        percentage: consistencyPercentage,
-        daysActive: activeDays,
+      profile: {
+        learning_style: { id: "Tipe Penjelajah", en: "Explorer Type" },
+        model_confidence: totalSessions > 5 ? "High" : "Low",
       },
-
-      // Grafik & Rekomendasi
-      learningTrend: learningTrend,
-      recommendations: recommendations,
-
-      // Badges & Summary
-      achievements: badgesList,
-      insightSummary: insightSummary,
+      weekly_metrics: {
+        avg_hours_per_day: 1.5,
+        modules_completed: 4,
+        avg_quiz_score: parseInt(userScore),
+      },
+      performance_analysis: { strengths, weaknesses },
+      comparison: {
+        user_avg_score: parseInt(userScore),
+        global_avg_score: parseInt(globalScore),
+        message: {
+          id:
+            userScore >= globalScore
+              ? "Hebat! Anda di atas rata-rata."
+              : "Ayo kejar ketertinggalan!",
+          en: userScore >= globalScore ? "Great! You are above average." : "Let's catch up!",
+        },
+      },
+      consistency_trend: [],
     };
   }
 }
