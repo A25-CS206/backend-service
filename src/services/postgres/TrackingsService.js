@@ -6,9 +6,9 @@ class TrackingsService {
     this._pool = pool;
   }
 
-  // --- 1. FITUR DASHBOARD (Stats & Trend) ---
+  // --- 1. FITUR DASHBOARD LENGKAP (Stats, Trend, Recs, Insight) ---
   async getDashboardStatistics(userId) {
-    // A. Statistik Utama
+    // A. Statistik Utama (Total Jam, Modul Selesai, Rata-rata Nilai)
     const queryStats = {
       text: `
         SELECT 
@@ -21,11 +21,7 @@ class TrackingsService {
       values: [userId],
     };
 
-    const resStats = await this._pool.query(queryStats);
-    const stats = resStats.rows[0];
-
-    // B. Learning Trend (KEMBALI BERSIH, TANPA CASTING)
-    // Karena last_viewed di DB sudah TIMESTAMP, kita langsung pakai fungsinya.
+    // B. Learning Trend (7 Hari Terakhir)
     const queryTrend = {
       text: `
         SELECT 
@@ -40,21 +36,112 @@ class TrackingsService {
       values: [userId],
     };
 
-    const resTrend = await this._pool.query(queryTrend);
+    // C. Today's Recommendation (Lanjutkan materi terakhir yang dibuka)
+    const queryRec = {
+      text: `
+        SELECT 
+          j.id as journey_id,
+          j.name as journey_name,
+          j.image_path,
+          tut.id as tutorial_id,
+          tut.title as tutorial_title,
+          t.last_viewed
+        FROM developer_journey_trackings t
+        JOIN developer_journeys j ON t.journey_id = j.id
+        JOIN developer_journey_tutorials tut ON t.tutorial_id = tut.id
+        WHERE t.developer_id = $1
+        ORDER BY t.last_viewed DESC
+        LIMIT 1
+      `,
+      values: [userId],
+    };
 
-    // Format Data untuk Frontend
+    // D. Module Recommendation (Saran modul baru yang belum diambil)
+    // Logika: Ambil 2 modul yang ID-nya TIDAK ADA di tabel tracking user
+    const queryNewMod = {
+      text: `
+        SELECT id, name, image_path, difficulty 
+        FROM developer_journeys 
+        WHERE id NOT IN (SELECT journey_id FROM developer_journey_trackings WHERE developer_id = $1)
+        LIMIT 2
+      `,
+      values: [userId],
+    };
+
+    // --- EKSEKUSI SEMUA QUERY (Parallel biar cepat) ---
+    const [resStats, resTrend, resRec, resNewMod] = await Promise.all([
+      this._pool.query(queryStats),
+      this._pool.query(queryTrend),
+      this._pool.query(queryRec),
+      this._pool.query(queryNewMod),
+    ]);
+
+    const stats = resStats.rows[0];
+    const trendData = resTrend.rows;
+    const lastActivity = resRec.rows[0];
+    const newModules = resNewMod.rows;
+
+    // --- LOGIKA PERSONAL INSIGHT (Sederhana untuk Dashboard) ---
+    let insightSummary = "Ayo mulai belajar!";
+    let consistencyStatus = "Low";
+
+    if (trendData.length >= 5) {
+      insightSummary = "Luar biasa! Kamu sangat rajin minggu ini.";
+      consistencyStatus = "High";
+    } else if (trendData.length >= 3) {
+      insightSummary = "Kamu cukup konsisten, pertahankan!";
+      consistencyStatus = "Medium";
+    } else if (trendData.length > 0) {
+      insightSummary = "Jangan lupa luangkan waktu belajar setiap hari.";
+      consistencyStatus = "Low";
+    }
+
+    // --- FORMAT DATA FINAL ---
     return {
+      // 1. Stats Angka
       total_study_hours: (parseInt(stats.total_seconds) / 3600).toFixed(1),
       modules_completed: parseInt(stats.modules_completed),
       avg_quiz_score: parseFloat(stats.avg_score).toFixed(1),
-      learning_trend: resTrend.rows.map((row) => ({
+
+      // 2. Trend Grafik
+      learning_trend: trendData.map((row) => ({
         day: row.day_name.trim(),
         value: parseInt(row.activity_count),
       })),
+
+      // 3. Today's Recommendation (Resume)
+      todays_recommendation: lastActivity
+        ? {
+            type: "resume",
+            journey_name: lastActivity.journey_name,
+            tutorial_title: lastActivity.tutorial_title,
+            image: lastActivity.image_path,
+            message: "Lanjutkan progres belajarmu yang terakhir.",
+          }
+        : {
+            type: "start",
+            message: "Kamu belum memulai kelas apapun. Pilih rekomendasi di bawah!",
+          },
+
+      // 4. Module Recommendations (New)
+      personalized_recommendations: newModules.map((m) => ({
+        id: m.id,
+        name: m.name,
+        image: m.image_path,
+        difficulty: m.difficulty,
+      })),
+
+      // 5. Insight & Consistency
+      personal_insight_summary: insightSummary,
+      consistency_of_access: {
+        status: consistencyStatus, // Low, Medium, High
+        days_active_this_week: trendData.length,
+        message: `Kamu aktif ${trendData.length} hari dalam 7 hari terakhir.`,
+      },
     };
   }
 
-  // --- 2. FITUR MY COURSES ---
+  // --- 2. FITUR MY COURSES (Tetap Sama) ---
   async getMyCourses(userId) {
     const query = {
       text: `
@@ -89,10 +176,8 @@ class TrackingsService {
     }));
   }
 
-  // --- 3. LOG AKTIVITAS ---
+  // --- 3. LOG AKTIVITAS (Tetap Sama) ---
   async logActivity({ journeyId, tutorialId, userId }) {
-    // KITA TETAP GUNAKAN ISO STRING DARI JS
-    // Postgres cukup pintar untuk otomatis konversi string ISO ke Timestamp saat INSERT/UPDATE
     const timeNow = new Date().toISOString();
 
     const checkQuery = {
@@ -131,7 +216,7 @@ class TrackingsService {
     }
   }
 
-  // --- 4. LIST HISTORY DETAIL ---
+  // --- 4. LIST HISTORY DETAIL (Tetap Sama) ---
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT 
