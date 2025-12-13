@@ -3,14 +3,12 @@ const InvariantError = require("../../exceptions/InvariantError");
 
 class TrackingsService {
   constructor(pool) {
-    // KOREKSI: Kita terima pool dari server.js, bukan bikin baru.
     this._pool = pool;
   }
 
   // --- 1. FITUR DASHBOARD (Stats & Trend) ---
   async getDashboardStatistics(userId) {
-    // A. Statistik Utama (Total Jam, Modul Selesai, Rata-rata Nilai)
-    // Kita ambil data dari tabel 'completions' karena itu data valid kelulusan
+    // A. Statistik Utama
     const queryStats = {
       text: `
         SELECT 
@@ -26,8 +24,8 @@ class TrackingsService {
     const resStats = await this._pool.query(queryStats);
     const stats = resStats.rows[0];
 
-    // B. Learning Trend (Aktivitas 7 Hari Terakhir)
-    // Kita hitung berapa kali user "logActivity" per hari
+    // B. Learning Trend (KEMBALI BERSIH, TANPA CASTING)
+    // Karena last_viewed di DB sudah TIMESTAMP, kita langsung pakai fungsinya.
     const queryTrend = {
       text: `
         SELECT 
@@ -46,20 +44,18 @@ class TrackingsService {
 
     // Format Data untuk Frontend
     return {
-      total_study_hours: (parseInt(stats.total_seconds) / 3600).toFixed(1), // Detik -> Jam
+      total_study_hours: (parseInt(stats.total_seconds) / 3600).toFixed(1),
       modules_completed: parseInt(stats.modules_completed),
       avg_quiz_score: parseFloat(stats.avg_score).toFixed(1),
       learning_trend: resTrend.rows.map((row) => ({
-        day: row.day_name.trim(), // Senin, Selasa...
+        day: row.day_name.trim(),
         value: parseInt(row.activity_count),
       })),
     };
   }
 
-  // --- 2. FITUR MY COURSES (Status Completed/In Progress) ---
+  // --- 2. FITUR MY COURSES ---
   async getMyCourses(userId) {
-    // Logic: Ambil Journey yang ada di Tracking, lalu cek di Completion
-    // DISTINCT ON (j.id) supaya kursus tidak muncul dobel kalau user buka banyak bab
     const query = {
       text: `
         SELECT DISTINCT ON (j.id)
@@ -83,7 +79,6 @@ class TrackingsService {
 
     const result = await this._pool.query(query);
 
-    // Mapping ke camelCase buat Frontend
     return result.rows.map((row) => ({
       id: row.id,
       title: row.name,
@@ -94,8 +89,10 @@ class TrackingsService {
     }));
   }
 
-  // --- 3. LOG AKTIVITAS (Core Tracking) ---
+  // --- 3. LOG AKTIVITAS ---
   async logActivity({ journeyId, tutorialId, userId }) {
+    // KITA TETAP GUNAKAN ISO STRING DARI JS
+    // Postgres cukup pintar untuk otomatis konversi string ISO ke Timestamp saat INSERT/UPDATE
     const timeNow = new Date().toISOString();
 
     const checkQuery = {
@@ -106,7 +103,6 @@ class TrackingsService {
     const checkResult = await this._pool.query(checkQuery);
 
     if (checkResult.rows.length > 0) {
-      // Update last_viewed
       const updateQuery = {
         text: `UPDATE developer_journey_trackings 
                SET last_viewed = $1 
@@ -117,7 +113,6 @@ class TrackingsService {
       const result = await this._pool.query(updateQuery);
       return result.rows[0].id;
     } else {
-      // Insert Baru
       const id = `track-${nanoid(16)}`;
       const insertQuery = {
         text: `INSERT INTO developer_journey_trackings 
@@ -136,7 +131,7 @@ class TrackingsService {
     }
   }
 
-  // --- 4. LIST HISTORY DETAIL (Opsional) ---
+  // --- 4. LIST HISTORY DETAIL ---
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT 
