@@ -6,9 +6,11 @@ class TrackingsService {
     this._pool = pool;
   }
 
-  // --- 1. FITUR DASHBOARD LENGKAP (Stats, Trend, Recs, Insight) ---
+  // ==========================================================
+  // 1. FITUR DASHBOARD (Statistik, Rekomendasi, & Insight)
+  // ==========================================================
   async getDashboardStatistics(userId) {
-    // A. Statistik Utama (Total Jam, Modul Selesai, Rata-rata Nilai)
+    // --- QUERY A: Statistik Utama (Total Jam, Modul Selesai, Nilai Rata-rata) ---
     const queryStats = {
       text: `
         SELECT 
@@ -21,7 +23,8 @@ class TrackingsService {
       values: [userId],
     };
 
-    // B. Learning Trend (7 Hari Terakhir)
+    // --- QUERY B: Learning Trend (7 Hari Terakhir) ---
+    // Mengambil data aktivitas harian untuk grafik
     const queryTrend = {
       text: `
         SELECT 
@@ -36,7 +39,8 @@ class TrackingsService {
       values: [userId],
     };
 
-    // C. Today's Recommendation (Lanjutkan materi terakhir yang dibuka)
+    // --- QUERY C: Today's Recommendation (Resume Learning) ---
+    // Mengambil materi terakhir yang dibuka user
     const queryRec = {
       text: `
         SELECT 
@@ -56,8 +60,8 @@ class TrackingsService {
       values: [userId],
     };
 
-    // D. Module Recommendation (Saran modul baru yang belum diambil)
-    // Logika: Ambil 2 modul yang ID-nya TIDAK ADA di tabel tracking user
+    // --- QUERY D: Module Recommendation (New Courses) ---
+    // Merekomendasikan 2 kelas yang BELUM pernah diambil user
     const queryNewMod = {
       text: `
         SELECT id, name, image_path, difficulty 
@@ -68,7 +72,7 @@ class TrackingsService {
       values: [userId],
     };
 
-    // --- EKSEKUSI SEMUA QUERY (Parallel biar cepat) ---
+    // Eksekusi Parallel (Lebih Cepat)
     const [resStats, resTrend, resRec, resNewMod] = await Promise.all([
       this._pool.query(queryStats),
       this._pool.query(queryTrend),
@@ -81,49 +85,63 @@ class TrackingsService {
     const lastActivity = resRec.rows[0];
     const newModules = resNewMod.rows;
 
-    // --- LOGIKA PERSONAL INSIGHT (Sederhana untuk Dashboard) ---
-    let insightSummary = "Ayo mulai belajar!";
+    // --- LOGIKA PERSONAL INSIGHT & KONSISTENSI (YANG DIPERBAIKI) ---
+    const daysActive = trendData.length;
     let consistencyStatus = "Low";
+    let insightTitle = { id: "Ayo Mulai!", en: "Let's Start!" };
+    let insightMessage = { id: "Belum ada aktivitas minggu ini.", en: "No activity this week." };
 
-    if (trendData.length >= 5) {
-      insightSummary = "Luar biasa! Kamu sangat rajin minggu ini.";
+    if (daysActive >= 5) {
       consistencyStatus = "High";
-    } else if (trendData.length >= 3) {
-      insightSummary = "Kamu cukup konsisten, pertahankan!";
+      insightTitle = { id: "Luar Biasa!", en: "Outstanding!" };
+      insightMessage = {
+        id: `Kamu sangat rajin! Aktif ${daysActive} hari dalam seminggu.`,
+        en: `You are on fire! Active for ${daysActive} days this week.`,
+      };
+    } else if (daysActive >= 3) {
       consistencyStatus = "Medium";
-    } else if (trendData.length > 0) {
-      insightSummary = "Jangan lupa luangkan waktu belajar setiap hari.";
+      insightTitle = { id: "Bagus Sekali!", en: "Good Job!" };
+      insightMessage = {
+        id: "Konsistensimu terjaga. Pertahankan ritme ini!",
+        en: "Your consistency is solid. Keep up the rhythm!",
+      };
+    } else if (daysActive > 0) {
       consistencyStatus = "Low";
+      insightTitle = { id: "Tetap Semangat!", en: "Keep Going!" };
+      insightMessage = {
+        id: "Coba luangkan waktu 15 menit setiap hari untuk belajar.",
+        en: "Try to spend 15 minutes every day to learn.",
+      };
     }
 
-    // --- FORMAT DATA FINAL ---
+    // --- RETURN DATA FINAL KE FRONTEND ---
     return {
-      // 1. Stats Angka
+      // 1. Statistik Angka
       total_study_hours: (parseInt(stats.total_seconds) / 3600).toFixed(1),
       modules_completed: parseInt(stats.modules_completed),
       avg_quiz_score: parseFloat(stats.avg_score).toFixed(1),
 
-      // 2. Trend Grafik
+      // 2. Grafik Trend Harian
       learning_trend: trendData.map((row) => ({
         day: row.day_name.trim(),
         value: parseInt(row.activity_count),
       })),
 
-      // 3. Today's Recommendation (Resume)
+      // 3. Today's Recommendation (Lanjut Belajar)
       todays_recommendation: lastActivity
         ? {
             type: "resume",
             journey_name: lastActivity.journey_name,
             tutorial_title: lastActivity.tutorial_title,
             image: lastActivity.image_path,
-            message: "Lanjutkan progres belajarmu yang terakhir.",
+            message: { id: "Lanjutkan progres terakhirmu.", en: "Resume your last progress." },
           }
         : {
             type: "start",
-            message: "Kamu belum memulai kelas apapun. Pilih rekomendasi di bawah!",
+            message: { id: "Pilih kelas pertamamu di bawah!", en: "Pick your first course below!" },
           },
 
-      // 4. Module Recommendations (New)
+      // 4. Personalized Module Recommendations
       personalized_recommendations: newModules.map((m) => ({
         id: m.id,
         name: m.name,
@@ -131,17 +149,24 @@ class TrackingsService {
         difficulty: m.difficulty,
       })),
 
-      // 5. Insight & Consistency
-      personal_insight_summary: insightSummary,
+      // 5. Personal Insight Summary (Bilingual)
+      personal_insight_summary: {
+        title: insightTitle,
+        detail: insightMessage,
+      },
+
+      // 6. Consistency Status
       consistency_of_access: {
-        status: consistencyStatus, // Low, Medium, High
-        days_active_this_week: trendData.length,
-        message: `Kamu aktif ${trendData.length} hari dalam 7 hari terakhir.`,
+        status: consistencyStatus, // High, Medium, Low (Untuk warna indikator)
+        days_active: daysActive,
+        message: insightMessage,
       },
     };
   }
 
-  // --- 2. FITUR MY COURSES (Tetap Sama) ---
+  // ==========================================================
+  // 2. FITUR MY COURSES (List Kelas User)
+  // ==========================================================
   async getMyCourses(userId) {
     const query = {
       text: `
@@ -176,7 +201,9 @@ class TrackingsService {
     }));
   }
 
-  // --- 3. LOG AKTIVITAS (Tetap Sama) ---
+  // ==========================================================
+  // 3. FITUR LOG ACTIVITY (Mencatat User Buka Materi)
+  // ==========================================================
   async logActivity({ journeyId, tutorialId, userId }) {
     const timeNow = new Date().toISOString();
 
@@ -188,6 +215,7 @@ class TrackingsService {
     const checkResult = await this._pool.query(checkQuery);
 
     if (checkResult.rows.length > 0) {
+      // Update waktu terakhir dilihat
       const updateQuery = {
         text: `UPDATE developer_journey_trackings 
                SET last_viewed = $1 
@@ -198,6 +226,7 @@ class TrackingsService {
       const result = await this._pool.query(updateQuery);
       return result.rows[0].id;
     } else {
+      // Insert baru jika belum pernah buka
       const id = `track-${nanoid(16)}`;
       const insertQuery = {
         text: `INSERT INTO developer_journey_trackings 
@@ -216,7 +245,9 @@ class TrackingsService {
     }
   }
 
-  // --- 4. LIST HISTORY DETAIL (Tetap Sama) ---
+  // ==========================================================
+  // 4. FITUR HISTORY LIST (Log Detail)
+  // ==========================================================
   async getStudentActivities(userId) {
     const query = {
       text: `SELECT 
